@@ -1,8 +1,14 @@
+"""
+Datasets module - Contains dataset loaders for EMBER, Sorel-20M và AV datasets.
+"""
+
+import os
+
 import ember
-import numpy as np 
+import numpy as np
 import pandas as pd
 from sklearn.utils import shuffle
-import os
+
 
 def get_ember_data(data_dir, seed=42):
     emberdf = ember.read_metadata(data_dir)
@@ -29,40 +35,54 @@ def get_ember_data(data_dir, seed=42):
 
     return X_train_unlab, X_test, y_train_unlab, y_test
 
-def get_sorel_data(data_dir, seed=42):
 
+def get_sorel_data(data_dir, seed=42):
     ndim = 2381
     X_train_path = os.path.join(data_dir, "X_val.dat")
     y_train_path = os.path.join(data_dir, "y_val.dat")
     y_train = np.memmap(y_train_path, dtype=np.float32, mode="r")
-    N = y_train.shape[0]
-    X_train = np.memmap(X_train_path, dtype=np.float32, mode="r", shape=(N, ndim))
+    n_train = y_train.shape[0]
+    X_train = np.memmap(X_train_path, dtype=np.float32, mode="r", shape=(n_train, ndim))
 
     X_test_path = os.path.join(data_dir, "X_test.dat")
     y_test_path = os.path.join(data_dir, "y_test.dat")
     y_test = np.memmap(y_test_path, dtype=np.float32, mode="r")
-    N = y_test.shape[0]
-    X_test = np.memmap(X_test_path, dtype=np.float32, mode="r", shape=(N, ndim))
+    n_test = y_test.shape[0]
+    X_test = np.memmap(X_test_path, dtype=np.float32, mode="r", shape=(n_test, ndim))
 
     # X_train, y_train = shuffle(X_train, y_train, random_state=seed)
-    
+
     return X_train, X_test, y_train, y_test
 
+
 def get_av_data(data_dir, family, av_provider, seed):
+    X_ben = np.memmap(
+        os.path.join(data_dir, "benign/X_merged_Apr19.dat"),
+        dtype=np.float32,
+        mode="r",
+        shape=(36226, 2381),
+    )
+    X_mal = np.memmap(
+        os.path.join(data_dir, "malware/X_mal.dat"),
+        dtype=np.float64,
+        mode="r",
+        shape=(391008, 2381),
+    )
 
-    X_ben = np.memmap(os.path.join(data_dir, 'benign/X_merged_Apr19.dat'), dtype=np.float32, mode='r', shape=(36226, 2381))
-    X_mal = np.memmap(os.path.join(data_dir, 'malware/X_mal.dat'), dtype=np.float64, mode='r', shape=(391008, 2381))
-
-    df_ben = pd.read_csv(os.path.join(data_dir, 'benign_with_ts_vt_final_labels_2022.csv'), index_col=0)
-    df_mal = pd.read_csv(os.path.join(data_dir, f'malware_test_labeled_{family}_2022d.csv'), index_col=0)
-
+    df_ben = pd.read_csv(
+        os.path.join(data_dir, "benign_with_ts_vt_final_labels_2022.csv"), index_col=0
+    )
+    df_mal = pd.read_csv(
+        os.path.join(data_dir, f"malware_test_labeled_{family}_2022d.csv"),
+        index_col=0,
+    )
 
     y_target_ben = df_ben[av_provider].values
     y_target_mal = df_mal[av_provider].values
 
-    # Split malware data to train and test based on time 
-    train_idx = list(df_mal[df_mal.label == 'train'].index)
-    test_idx = list(df_mal[df_mal.label == 'test'].index)
+    # Split malware data to train and test based on time
+    train_idx = list(df_mal[df_mal.label == "train"].index)
+    test_idx = list(df_mal[df_mal.label == "test"].index)
 
     X_train_mal = X_mal[train_idx]
     X_test_mal = X_mal[test_idx]
@@ -74,8 +94,8 @@ def get_av_data(data_dir, family, av_provider, seed):
     print("y_target_train_mal", y_target_train_mal.shape)
     print("y_target_test_mal", y_target_test_mal.shape)
 
-    train_idx = list(df_ben[df_ben.label == 'train'].index)
-    test_idx = list(df_ben[df_ben.label == 'test'].index)
+    train_idx = list(df_ben[df_ben.label == "train"].index)
+    test_idx = list(df_ben[df_ben.label == "test"].index)
 
     X_train_ben = X_ben[train_idx]
     X_test_ben = X_ben[test_idx]
@@ -90,10 +110,9 @@ def get_av_data(data_dir, family, av_provider, seed):
     # Create the true labels
     y_train_mal = np.ones(len(y_target_train_mal))
     y_train_ben = np.zeros(len(y_target_train_ben))
-    
+
     y_test_mal = np.ones(len(y_target_test_mal))
     y_test_ben = np.zeros(len(y_target_test_ben))
-    
 
     X_train = np.vstack((X_train_mal, X_train_ben))
     X_test = np.vstack((X_test_mal, X_test_ben))
@@ -104,11 +123,22 @@ def get_av_data(data_dir, family, av_provider, seed):
 
     assert X_train.shape[0] == y_train.shape[0], "Shape of X and y do not match!"
     assert X_test.shape[0] == y_test.shape[0], "Shape of X_test and y_test do not match!"
-    assert X_train.shape[0] == y_target_train.shape[0], "Shape of X and y_target_train do not match!"
-    assert X_test.shape[0] == y_target_test.shape[0], "Shape of X_test and y_target_test do not match!"
+    assert (
+        X_train.shape[0] == y_target_train.shape[0]
+    ), "Shape of X and y_target_train do not match!"
+    assert (
+        X_test.shape[0] == y_target_test.shape[0]
+    ), "Shape of X_test and y_target_test do not match!"
 
     # Shuffle the data to mix malware and benign samples
-    X_train, y_target_train, y_train = shuffle(X_train, y_target_train, y_train, random_state=seed)
-    X_test, y_target_test, y_test = shuffle(X_test, y_target_test, y_test, random_state=seed)
+    X_train, y_target_train, y_train = shuffle(
+        X_train, y_target_train, y_train, random_state=seed
+    )
+    X_test, y_target_test, y_test = shuffle(
+        X_test, y_target_test, y_test, random_state=seed
+    )
 
     return X_train, X_test, y_target_train, y_target_test, y_train, y_test
+
+
+__all__ = ["get_ember_data", "get_sorel_data", "get_av_data"]

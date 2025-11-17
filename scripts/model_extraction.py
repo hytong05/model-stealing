@@ -4,16 +4,24 @@ import argparse
 import os 
 import numpy as np 
 
-from sampling_strategy import entropy_sampling, random_sampling, mc_dropout, k_center, ensemble
-from utils import init_scores, log_and_score
+import sys
+from pathlib import Path
+
+# Add project root to path
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.sampling import entropy_sampling, random_sampling, mc_dropout, k_center, ensemble
+from src.utils import init_scores, log_and_score
 from sklearn_extra.cluster import KMedoids
 import pandas as pd
 from datetime import datetime
 from mlflow import mlflow, log_param
 
-from target import LGBTarget, FileBasedTarget, TorchTarget
-from attacker import LGBAttacker, KerasAttacker, KerasDualAttacker, SVMAttacker
-from datasets import get_ember_data, get_av_data, get_sorel_data
+from src.targets import LGBTarget, FileBasedTarget, TorchTarget
+from src.attackers import LGBAttacker, KerasAttacker, KerasDualAttacker, SVMAttacker
+from src.datasets import get_ember_data, get_av_data, get_sorel_data
 
 # MLFLOW: Set to False if not supported
 MLFLOW = True

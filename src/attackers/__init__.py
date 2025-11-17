@@ -1,12 +1,16 @@
 import lightgbm as lgb
-from model import create_dnn, create_dnn2
+from ..models.dnn import create_dnn, create_dnn2
 import tensorflow as tf
 import joblib
 import abc
 
 # This is optional and can also be called from the command line
-from sklearnex import patch_sklearn
-patch_sklearn()
+try:
+    from sklearnex import patch_sklearn
+
+    patch_sklearn()
+except ImportError:
+    patch_sklearn = None
 from sklearn import svm
 
 class AbstractAttacker(abc.ABC):
@@ -44,12 +48,18 @@ class LGBAttacker(AbstractAttacker):
     def train_model(self, X, y, X_val, y_val, boosting_rounds=100, early_stopping=15):
         train_data = lgb.Dataset(X, label=y)
         self.val_data = lgb.Dataset(X_val, y_val)
-        self.model = lgb.train(self.lgb_params, train_data,
-                    num_boost_round=boosting_rounds,
-                    valid_sets=[self.val_data],
-                    verbose_eval=False,
-                    early_stopping_rounds=early_stopping
-                    )                
+        # LightGBM mới dùng callbacks cho early stopping và logging
+        callbacks = [
+            lgb.log_evaluation(period=0),  # period=0 để không log
+            lgb.early_stopping(stopping_rounds=early_stopping)  # Early stopping
+        ]
+        self.model = lgb.train(
+            self.lgb_params, 
+            train_data,
+            num_boost_round=boosting_rounds,
+            valid_sets=[self.val_data],
+            callbacks=callbacks
+        )                
     
     def __call__(self, X):
         return self.model.predict(X)
@@ -59,10 +69,10 @@ class LGBAttacker(AbstractAttacker):
 
 
 class KerasAttacker(AbstractAttacker):
-    def __init__(self, early_stopping=30, seed=42, mc=False):
+    def __init__(self, early_stopping=30, seed=42, mc=False, input_shape=(2381,)):
 
-        self.model = create_dnn(seed=seed, mc=mc)
-        self.checkpoint_filepath = '/tmp/checkpoint'
+        self.model = create_dnn(seed=seed, input_shape=input_shape, mc=mc)
+        self.checkpoint_filepath = '/tmp/checkpoint.weights.h5'
         self.model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.checkpoint_filepath,
             save_weights_only=True,
@@ -138,4 +148,3 @@ class SVMAttacker(AbstractAttacker):
 
     def save_model(self, path):
         joblib.dump(self.model, path+".joblib")
-        

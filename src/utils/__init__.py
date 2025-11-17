@@ -1,55 +1,67 @@
-from zipfile import ZipFile
-import os 
+"""
+Utils module - Các hàm tiện ích dùng chung.
+"""
+
 import hashlib
-from sklearn.metrics import accuracy_score, hamming_loss, confusion_matrix, recall_score, precision_score, roc_auc_score, roc_curve
-from mlflow import log_metric
+import os
+from zipfile import ZipFile
+
 import numpy as np
+from mlflow import log_metric
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    hamming_loss,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+    roc_curve,
+)
+
+from .query import Query
+
 
 def rename_files_to_sha256(path):
     """
-        Rename all the files within a directory to their
-        SHA256 equivalent.
+    Rename toàn bộ file trong thư mục sang tên SHA256 của nội dung.
     """
-    # path = '/data/mari/binaries/benign'
     files = os.listdir(path)
 
     for filename in files:
-        # if "code" not in filename:
         with open(os.path.join(path, filename), "rb") as f:
-            bytes = f.read() # read entire file as bytes
-            readable_hash = hashlib.sha256(bytes).hexdigest();
+            bytes_content = f.read()  # đọc toàn bộ file
+            readable_hash = hashlib.sha256(bytes_content).hexdigest()
             print(readable_hash)
-            os.rename(os.path.join(path, filename), os.path.join(path, readable_hash))
-    
+            os.rename(
+                os.path.join(path, filename), os.path.join(path, readable_hash)
+            )
+
 
 def compress_files(file_list):
     """
-        Take a list of file paths and create a zip archive with all the files.
-        It removes the file path.
-        Return: test.zip
+    Nhận list các file path và nén thành một file zip.
+    Trả về: test.zip
     """
-    with ZipFile('test.zip', mode='w') as zf:
-        for f in file_list:
+    with ZipFile("test.zip", mode="w") as zf:
+        for file_path in file_list:
             try:
-                zf.write(f)
-            except:
-                print(f"{f} does not exist.")
-                pass 
-            
+                zf.write(file_path)
+            except FileNotFoundError:
+                print(f"{file_path} does not exist.")
+
 
 def get_fpr(y_true, y_pred):
     """
-        Given the true and predicted labels calculate the FPR.
-        Uses the confusion_matrix() from scikit-learn.
+    Tính False Positive Rate từ y_true và y_pred.
     """
     tn, fp, _, _ = confusion_matrix(y_true, y_pred).ravel()
     fpr = fp / (tn + fp)
     return fpr
 
+
 def get_tpr_at_fpr(y_true, y_pred, target_fpr):
     """
-    Given the true labels and the probabilities of the model
-    calculate the TPR at a given FPR level.
+    Tính True Positive Rate tại một FPR cụ thể.
     """
     fpr, tpr, _ = roc_curve(y_true, y_pred)
     return np.interp(target_fpr, fpr, tpr)
@@ -57,14 +69,16 @@ def get_tpr_at_fpr(y_true, y_pred, target_fpr):
 
 def find_threshold(y_true, y_pred, fpr_target):
     """
-    Given the true labels and the probabilities of the model
-    calculate the decision threshold for a given FPR level.
+    Tìm threshold quyết định cho mức FPR mục tiêu.
     """
     fpr, _, thresh = roc_curve(y_true, y_pred)
     return np.interp(fpr_target, fpr, thresh)
 
 
 def init_scores():
+    """
+    Khởi tạo dict chứa các metric trong quá trình training/evaluation.
+    """
     scores = {
         "acc": [],
         "agg": [],
@@ -74,19 +88,20 @@ def init_scores():
         "auc": [],
         "confs": [],
         "threshold": [],
-        # "rocs" : [],
-        "nums": []
+        "nums": [],
     }
     return scores
 
 
 def log_and_score(y_proba, y_pred_target, y_test, scores, fpr_target, logging=True):
-
+    """
+    Ghi log metric (nếu bật) và cập nhật dict scores.
+    """
     thresh = find_threshold(y_test, y_proba, fpr_target)
     y_pred = [int(i > thresh) for i in y_proba]
 
     test_score = accuracy_score(y_test, y_pred)
-    agg_score = 1.0 - hamming_loss(y_pred_target, y_pred)    
+    agg_score = 1.0 - hamming_loss(y_pred_target, y_pred)
     fpr_score = get_fpr(y_test, y_pred)
     rec_score = recall_score(y_test, y_pred)
     pres_score = precision_score(y_test, y_pred)
@@ -101,9 +116,6 @@ def log_and_score(y_proba, y_pred_target, y_test, scores, fpr_target, logging=Tr
     print("Precision:", pres_score)
     print("AUC:", auc_score)
     print("Confusion matrix:", conf_mat)
-    
-    # testing that the threshold is correct
-    # print("tpr at threshold:", np.sum(y_proba[y_test == 1] > thresh) / np.sum(y_test == 1))
 
     scores["acc"].append(test_score)
     scores["agg"].append(agg_score)
@@ -125,3 +137,15 @@ def log_and_score(y_proba, y_pred_target, y_test, scores, fpr_target, logging=Tr
         log_metric("Threshold", thresh, step=num_samples)
 
     return scores
+
+
+__all__ = [
+    "rename_files_to_sha256",
+    "compress_files",
+    "get_fpr",
+    "get_tpr_at_fpr",
+    "find_threshold",
+    "init_scores",
+    "log_and_score",
+    "Query",
+]
