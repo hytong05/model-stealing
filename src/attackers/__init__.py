@@ -104,7 +104,8 @@ class KerasDualAttacker(AbstractAttacker):
 
         self.model = create_dnn2(seed=seed, mc=mc)
 
-        self.checkpoint_filepath = '/tmp/checkpoint2'
+        # Keras yêu cầu filepath phải kết thúc bằng .weights.h5 khi save_weights_only=True
+        self.checkpoint_filepath = '/tmp/checkpoint2.weights.h5'
         self.model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.checkpoint_filepath,
             save_weights_only=True,

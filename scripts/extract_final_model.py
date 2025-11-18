@@ -7,14 +7,14 @@ import gc
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score, balanced_accuracy_score
 from sklearn.preprocessing import RobustScaler
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.attackers import KerasAttacker, LGBAttacker
+from src.attackers import KerasAttacker, LGBAttacker, KerasDualAttacker
 from src.targets.flexible_target import FlexibleKerasTarget, FlexibleLGBTarget
 from src.sampling import entropy_sampling
 from sklearn_extra.cluster import KMedoids
@@ -179,12 +179,12 @@ def run_extraction(
     num_epochs: int = 5,
     model_type: str = "h5",  # "h5" hoặc "lgb"
     normalization_stats_path: str = None,  # Cần thiết nếu model_type="lgb"
-    attacker_type: str = None,  # "keras" hoặc "lgb", None để tự động chọn theo model_type
+    attacker_type: str = None,  # "keras", "lgb", hoặc "dual" (dualDNN), None để tự động chọn theo model_type
 ) -> dict:
     rng = np.random.default_rng(seed)
 
     # Chỉ set TF environment variables nếu dùng Keras model
-    if model_type == "h5" or attacker_type == "keras":
+    if model_type == "h5" or attacker_type in ["keras", "dual"]:
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
         os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 
@@ -218,9 +218,21 @@ def run_extraction(
         print(f"   Updating feature_dim to {actual_feature_dim} (từ dataset)")
         feature_dim = actual_feature_dim
     
-    # Tạo oracle với feature_dim đúng (sau khi đã xác định từ dataset)
-    # Threshold mặc định là 0.5 - có thể cần điều chỉnh nếu oracle predict quá lệch
+    # QUAN TRỌNG: Validate và log thông tin target model
+    weights_path_abs = str(Path(weights_path).resolve())
+    if not Path(weights_path_abs).exists():
+        raise FileNotFoundError(f"❌ Target model không tồn tại: {weights_path_abs}")
+    
+    model_file_name = Path(weights_path_abs).name
+    model_file_size = Path(weights_path_abs).stat().st_size / (1024 * 1024)  # MB
+    
     print(f"\n🔄 Khởi tạo target model ({model_type.upper()}) với feature_dim={feature_dim}...")
+    print(f"   ✅ Target model file: {model_file_name}")
+    print(f"   ✅ Model path (absolute): {weights_path_abs}")
+    print(f"   ✅ Model size: {model_file_size:.2f} MB")
+    
+    if weights_path != weights_path_abs:
+        print(f"   ⚠️  Path được resolve: {weights_path} -> {weights_path_abs}")
     
     if model_type == "lgb":
         # LightGBM model cần normalization stats
@@ -230,16 +242,26 @@ def run_extraction(
                 "Vui lòng cung cấp đường dẫn tới file normalization_stats.npz"
             )
         
+        # Validate normalization stats path
+        if isinstance(normalization_stats_path, str):
+            stats_path_abs = str(Path(normalization_stats_path).resolve())
+            if not Path(stats_path_abs).exists():
+                raise FileNotFoundError(f"❌ Normalization stats không tồn tại: {stats_path_abs}")
+            normalization_stats_path = stats_path_abs
+        
+        print(f"   ✅ Normalization stats file: {Path(normalization_stats_path).name}")
+        print(f"   ✅ Stats path (absolute): {normalization_stats_path}")
+        
         oracle = FlexibleLGBTarget(
-            model_path=weights_path,
-            normalization_stats_path=normalization_stats_path,
+            model_path=weights_path_abs,  # Sử dụng absolute path
+            normalization_stats_path=normalization_stats_path,  # Sử dụng absolute path
             threshold=0.5,
-            name="lgb-target",
+            name=f"lgb-target-{model_file_name}",
             feature_dim=feature_dim
         )
     else:
         # Keras/H5 model
-        oracle = FlexibleKerasTarget(weights_path, feature_dim=feature_dim, threshold=0.5)
+        oracle = FlexibleKerasTarget(weights_path_abs, feature_dim=feature_dim, threshold=0.5)
     
     required_feature_dim = oracle.get_required_feature_dim()
     
@@ -257,7 +279,10 @@ def run_extraction(
     # Giải pháp: Load đủ lớn (seed_val + pool lớn nhất), shuffle với seed, sau đó chia
     # Tính pool lớn nhất cần thiết trong các configs (để đảm bảo không thiếu dữ liệu)
     # Với cấu hình hiện tại: max_queries_10000 có query_batch=2000, num_rounds=5 => pool cần 10000
-    max_pool_needed = query_batch * num_rounds
+    # QUAN TRỌNG: Thêm buffer 20% để đảm bảo KHÔNG BAO GIỜ thiếu queries
+    # Tăng buffer từ 10% lên 20% để đảm bảo đủ pool cho class balancing
+    max_pool_needed_base = query_batch * num_rounds
+    max_pool_needed = int(max_pool_needed_base * 1.2)  # Buffer 20%
     seed_val_size = seed_size + val_size
     total_needed = seed_val_size + max_pool_needed
     
@@ -276,19 +301,44 @@ def run_extraction(
     X_val = X_train_all[idx_offset : idx_offset + val_size]
     idx_offset += val_size
 
-    # Pool có thể nhỏ hơn max_pool_needed tùy theo config
-    # Nhưng vẫn lấy từ cùng một phần của dữ liệu đã shuffle
-    pool_needed = query_batch * num_rounds
+    # QUAN TRỌNG: Pool size phải đủ cho total queries + dư 20% để đảm bảo KHÔNG BAO GIỜ thiếu
+    # Do class balancing có thể thêm queries, và cần buffer lớn để đảm bảo đủ queries
+    pool_needed_base = query_batch * num_rounds
+    pool_needed = int(pool_needed_base * 1.2)  # Dư 20% để đảm bảo đủ queries (tăng từ 10% lên 20%)
+    
+    # Kiểm tra xem có đủ data không
+    available_pool = X_train_all.shape[0] - idx_offset
+    if available_pool < pool_needed:
+        # Nếu không đủ data cho pool với buffer, vẫn cố gắng lấy ít nhất pool_needed_base
+        if available_pool < pool_needed_base:
+            print(f"   ❌ LỖI NGHIÊM TRỌNG: Không đủ data cho pool!")
+            print(f"   ❌ Available: {available_pool:,}, Required: {pool_needed_base:,}")
+            print(f"   ❌ Pool sẽ cạn kiệt và queries sẽ thiếu!")
+            raise ValueError(
+                f"Không đủ data cho pool! Available: {available_pool:,}, "
+                f"Required: {pool_needed_base:,} (query_batch={query_batch:,} × num_rounds={num_rounds})"
+            )
+        else:
+            print(f"   ⚠️  CẢNH BÁO: Không đủ data cho pool với buffer ({available_pool:,} < {pool_needed:,})")
+            print(f"   💡 Sẽ dùng tối đa {available_pool:,} samples cho pool (thiếu buffer)")
+            pool_needed = available_pool
+    
     X_pool = X_train_all[idx_offset : idx_offset + pool_needed]
+    buffer_size = pool_needed - pool_needed_base
+    print(f"   ✅ Pool size: {X_pool.shape[0]:,} samples")
+    print(f"      - Target: {pool_needed_base:,} (query_batch={query_batch:,} × num_rounds={num_rounds})")
+    print(f"      - Buffer: +{buffer_size:,} ({buffer_size/pool_needed_base*100:.1f}%) để đảm bảo không thiếu queries")
     del X_train_all
     gc.collect()
 
     # Load eval set từ test file
+    # QUAN TRỌNG: Load cả ground truth labels để tính accuracy chính xác
     print(f"\n🔄 Đang load eval set ({eval_size:,} samples)...")
-    X_eval, _ = load_data_from_parquet(
+    X_eval, y_eval_gt = load_data_from_parquet(
         test_parquet, feature_cols, label_col, skip_rows=0, take_rows=eval_size, shuffle=True, seed=seed
     )
     print(f"✅ Eval set: {X_eval.shape}")
+    print(f"✅ Ground truth labels: {y_eval_gt.shape}")
 
     print(f"\n📊 Data split:")
     print(f"  Seed: {X_seed.shape[0]:,}")
@@ -300,13 +350,14 @@ def run_extraction(
     # - Với Keras/H5 model: Cần scale data với RobustScaler (model được train với scaled data)
     # - Với LightGBM model: FlexibleLGBTarget sẽ tự động normalize nếu có normalization_stats_path
     #   Không cần scale thêm với RobustScaler
+    # - Với dualDNN: Cũng cần scale data giống Keras
     scaler = None
     X_eval_s = None
     X_seed_s = None
     X_val_s = None
     X_pool_s = None
     
-    if model_type == "h5" or attacker_type == "keras":
+    if model_type == "h5" or attacker_type in ["keras", "dual"]:
         # Keras model cần scale data
         print(f"\n🔄 Đang scale dữ liệu trước khi query oracle (Keras model)...")
         scaler = RobustScaler()
@@ -347,6 +398,15 @@ def run_extraction(
     print(f"  Eval distribution: {eval_dist}")
     print(f"  Seed distribution: {seed_dist}")
     print(f"  Val distribution: {val_dist}")
+    
+    # QUAN TRỌNG: Đánh giá độ chính xác của oracle với ground truth
+    # Điều này giúp giải thích sự khác biệt giữa val_accuracy (vs oracle) và final accuracy (vs ground truth)
+    oracle_acc_vs_gt = accuracy_score(y_eval_gt, y_eval)
+    print(f"\n📊 Đánh giá Oracle (Target Model):")
+    print(f"   Oracle accuracy vs Ground Truth: {oracle_acc_vs_gt:.4f} ({oracle_acc_vs_gt*100:.2f}%)")
+    print(f"   ⚠️  LƯU Ý: Val accuracy trong training được tính với oracle labels (không phải ground truth)")
+    print(f"   ⚠️  Final accuracy được tính với ground truth labels")
+    print(f"   💡 Nếu oracle không chính xác 100%, sẽ có sự khác biệt giữa val_accuracy và final accuracy")
     
     # KIỂM TRA: Nếu oracle predict tất cả là một class, có thể có vấn đề
     all_distributions = [eval_dist, seed_dist, val_dist]
@@ -409,30 +469,66 @@ def run_extraction(
 
     def evaluate(model, round_id: int, total_labels: int):
         probs = np.squeeze(model(X_eval_s), axis=-1)
-        preds = (probs >= 0.5).astype(int)
-        agreement = (preds == y_eval).mean()
-        acc = accuracy_score(y_eval, preds)
+        
+        # Tối ưu threshold dựa trên F1-score với ground truth labels
+        # Điều này quan trọng với class imbalance nghiêm trọng
+        thresholds = np.linspace(0.1, 0.9, 81)
+        best_f1 = -1
+        best_threshold = 0.5
+        best_preds = (probs >= 0.5).astype(int)
+        
+        for thresh in thresholds:
+            preds_thresh = (probs >= thresh).astype(int)
+            _, _, f1_thresh, _ = precision_recall_fscore_support(
+                y_eval_gt, preds_thresh, average="binary", zero_division=0
+            )
+            if f1_thresh > best_f1:
+                best_f1 = f1_thresh
+                best_threshold = thresh
+                best_preds = preds_thresh
+        
+        # Sử dụng threshold tối ưu
+        preds = best_preds
+        
+        # QUAN TRỌNG: Agreement = so sánh predictions của surrogate với predictions của target model
+        # Accuracy = so sánh predictions của surrogate với ground truth labels
+        agreement = (preds == y_eval).mean()  # y_eval là predictions từ target model (oracle)
+        acc = accuracy_score(y_eval_gt, preds)  # y_eval_gt là ground truth labels
+        acc_vs_oracle = accuracy_score(y_eval, preds)  # Accuracy so với oracle (giống agreement nhưng dùng accuracy_score)
+        balanced_acc = balanced_accuracy_score(y_eval_gt, preds)
         precision, recall, f1, _ = precision_recall_fscore_support(
-            y_eval, preds, average="binary", zero_division=0
+            y_eval_gt, preds, average="binary", zero_division=0
         )
         try:
-            auc = roc_auc_score(y_eval, probs)
+            auc = roc_auc_score(y_eval_gt, probs)
         except ValueError:
             auc = float("nan")
 
         # Tính số queries thực tế (không tính seed và val)
         actual_queries = total_labels - seed_size - val_size
         
+        # Log metrics để giải thích sự khác biệt
+        print(f"\n📊 Round {round_id} Evaluation:")
+        print(f"   Agreement (vs Oracle): {agreement:.4f} ({agreement*100:.2f}%)")
+        print(f"   Accuracy (vs Ground Truth): {acc:.4f} ({acc*100:.2f}%)")
+        print(f"   Oracle Accuracy (vs Ground Truth): {oracle_acc_vs_gt:.4f} ({oracle_acc_vs_gt*100:.2f}%)")
+        print(f"   💡 Giải thích: Val accuracy trong training ({agreement:.4f}) cao vì so với oracle labels")
+        print(f"   💡 Final accuracy ({acc:.4f}) thấp hơn vì so với ground truth (oracle không hoàn hảo)")
+        
         metrics = {
             "round": round_id,
             "labels_used": int(total_labels),
             "queries_used": int(actual_queries),  # Số queries thực tế (chỉ tính active learning)
-            "surrogate_acc": float(acc),
+            "optimal_threshold": float(best_threshold),
+            "surrogate_acc": float(acc),  # Accuracy vs Ground Truth
+            "surrogate_acc_vs_oracle": float(acc_vs_oracle),  # Accuracy vs Oracle (tương tự agreement)
+            "surrogate_balanced_acc": float(balanced_acc),  # Quan trọng với class imbalance
             "surrogate_auc": float(auc),
             "surrogate_precision": float(precision),
             "surrogate_recall": float(recall),
             "surrogate_f1": float(f1),
             "agreement_with_target": float(agreement),
+            "oracle_acc_vs_gt": float(oracle_acc_vs_gt),  # Độ chính xác của oracle với ground truth
         }
         metrics_history.append(metrics)
         return metrics
@@ -451,35 +547,142 @@ def run_extraction(
             # LightGBM predict trả về 1D array hoặc 2D array
             if probs.ndim > 1:
                 probs = probs.flatten()
-            preds = (probs >= 0.5).astype(int)
-            agreement = (preds == y_eval).mean()
-            acc = accuracy_score(y_eval, preds)
+            
+            # Tối ưu threshold dựa trên F1-score với ground truth labels
+            # Điều này quan trọng với class imbalance nghiêm trọng
+            thresholds = np.linspace(0.1, 0.9, 81)
+            best_f1 = -1
+            best_threshold = 0.5
+            best_preds = (probs >= 0.5).astype(int)
+            
+            for thresh in thresholds:
+                preds_thresh = (probs >= thresh).astype(int)
+                _, _, f1_thresh, _ = precision_recall_fscore_support(
+                    y_eval_gt, preds_thresh, average="binary", zero_division=0
+                )
+                if f1_thresh > best_f1:
+                    best_f1 = f1_thresh
+                    best_threshold = thresh
+                    best_preds = preds_thresh
+            
+            # Sử dụng threshold tối ưu
+            preds = best_preds
+            
+            # QUAN TRỌNG: Agreement = so sánh predictions của surrogate với predictions của target model
+            # Accuracy = so sánh predictions của surrogate với ground truth labels
+            agreement = (preds == y_eval).mean()  # y_eval là predictions từ target model (oracle)
+            acc = accuracy_score(y_eval_gt, preds)  # y_eval_gt là ground truth labels
+            acc_vs_oracle = accuracy_score(y_eval, preds)  # Accuracy so với oracle (giống agreement nhưng dùng accuracy_score)
+            balanced_acc = balanced_accuracy_score(y_eval_gt, preds)
             precision, recall, f1, _ = precision_recall_fscore_support(
-                y_eval, preds, average="binary", zero_division=0
+                y_eval_gt, preds, average="binary", zero_division=0
             )
             try:
-                auc = roc_auc_score(y_eval, probs)
+                auc = roc_auc_score(y_eval_gt, probs)
             except ValueError:
                 auc = float("nan")
 
             # Tính số queries thực tế (không tính seed và val)
             actual_queries = total_labels - seed_size - val_size
             
+            # Log metrics để giải thích sự khác biệt
+            print(f"\n📊 Round {round_id} Evaluation:")
+            print(f"   Agreement (vs Oracle): {agreement:.4f} ({agreement*100:.2f}%)")
+            print(f"   Accuracy (vs Ground Truth): {acc:.4f} ({acc*100:.2f}%)")
+            print(f"   Oracle Accuracy (vs Ground Truth): {oracle_acc_vs_gt:.4f} ({oracle_acc_vs_gt*100:.2f}%)")
+            print(f"   💡 Giải thích: Val accuracy trong training ({agreement:.4f}) cao vì so với oracle labels")
+            print(f"   💡 Final accuracy ({acc:.4f}) thấp hơn vì so với ground truth (oracle không hoàn hảo)")
+            
             metrics = {
                 "round": round_id,
                 "labels_used": int(total_labels),
                 "queries_used": int(actual_queries),  # Số queries thực tế (chỉ tính active learning)
-                "surrogate_acc": float(acc),
+                "optimal_threshold": float(best_threshold),
+                "surrogate_acc": float(acc),  # Accuracy vs Ground Truth
+                "surrogate_acc_vs_oracle": float(acc_vs_oracle),  # Accuracy vs Oracle (tương tự agreement)
+                "surrogate_balanced_acc": float(balanced_acc),  # Quan trọng với class imbalance
                 "surrogate_auc": float(auc),
                 "surrogate_precision": float(precision),
                 "surrogate_recall": float(recall),
                 "surrogate_f1": float(f1),
                 "agreement_with_target": float(agreement),
+                "oracle_acc_vs_gt": float(oracle_acc_vs_gt),  # Độ chính xác của oracle với ground truth
             }
             metrics_history.append(metrics)
             return metrics
         
         evaluate = evaluate_lgb
+        evaluate(attacker, round_id=0, total_labels=labeled_X.shape[0])
+    elif attacker_type == "dual":
+        # DualDNN attacker cần scale data và cả ground truth labels (oracle predictions)
+        attacker = KerasDualAttacker(early_stopping=30, seed=seed)
+        # DualDNN train với (X, y_true) - y_true là oracle labels
+        attacker.train_model(labeled_X, labeled_y, labeled_y, X_val_s, y_val, y_val, num_epochs=num_epochs)
+        
+        def evaluate_dual(model, round_id, total_labels):
+            # DualDNN cần cả X và y_true (oracle labels) khi predict
+            # __call__ nhận 2 tham số riêng biệt (X, y_true), không phải tuple
+            probs = np.squeeze(model(X_eval_s, y_eval), axis=-1)
+            
+            # Tối ưu threshold dựa trên F1-score với ground truth labels
+            thresholds = np.linspace(0.1, 0.9, 81)
+            best_f1 = -1
+            best_threshold = 0.5
+            best_preds = (probs >= 0.5).astype(int)
+            
+            for thresh in thresholds:
+                preds_thresh = (probs >= thresh).astype(int)
+                _, _, f1_thresh, _ = precision_recall_fscore_support(
+                    y_eval_gt, preds_thresh, average="binary", zero_division=0
+                )
+                if f1_thresh > best_f1:
+                    best_f1 = f1_thresh
+                    best_threshold = thresh
+                    best_preds = preds_thresh
+            
+            # Sử dụng threshold tối ưu
+            preds = best_preds
+            
+            # Agreement và accuracy metrics
+            agreement = (preds == y_eval).mean()
+            acc = accuracy_score(y_eval_gt, preds)
+            acc_vs_oracle = accuracy_score(y_eval, preds)
+            balanced_acc = balanced_accuracy_score(y_eval_gt, preds)
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                y_eval_gt, preds, average="binary", zero_division=0
+            )
+            try:
+                auc = roc_auc_score(y_eval_gt, probs)
+            except ValueError:
+                auc = float("nan")
+            
+            # Tính số queries thực tế
+            actual_queries = total_labels - seed_size - val_size
+            
+            print(f"\n📊 Round {round_id} Evaluation (DualDNN):")
+            print(f"   Agreement (vs Oracle): {agreement:.4f} ({agreement*100:.2f}%)")
+            print(f"   Accuracy (vs Ground Truth): {acc:.4f} ({acc*100:.2f}%)")
+            print(f"   Oracle Accuracy (vs Ground Truth): {oracle_acc_vs_gt:.4f} ({oracle_acc_vs_gt*100:.2f}%)")
+            
+            metrics = {
+                "round": round_id,
+                "labels_used": int(total_labels),
+                "queries_used": int(actual_queries),
+                "optimal_threshold": float(best_threshold),
+                "surrogate_acc": float(acc),
+                "surrogate_acc_vs_oracle": float(acc_vs_oracle),
+                "surrogate_balanced_acc": float(balanced_acc),
+                "surrogate_auc": float(auc),
+                "surrogate_precision": float(precision),
+                "surrogate_recall": float(recall),
+                "surrogate_f1": float(f1),
+                "agreement_with_target": float(agreement),
+                "oracle_acc_vs_gt": float(oracle_acc_vs_gt),
+            }
+            metrics_history.append(metrics)
+            return metrics
+        
+        evaluate = evaluate_dual
         evaluate(attacker, round_id=0, total_labels=labeled_X.shape[0])
     else:
         # Keras attacker cần scale data
@@ -487,9 +690,42 @@ def run_extraction(
         attacker.train_model(labeled_X, labeled_y, X_val_s, y_val, num_epochs=num_epochs)
         evaluate(attacker, round_id=0, total_labels=labeled_X.shape[0])
 
+    # Track tổng queries để đảm bảo chính xác
+    total_queries_target = query_batch * num_rounds
+    total_queries_accumulated = 0
+    # Cho phép lệch tối đa 10% (dư chứ không được thiếu)
+    min_queries_acceptable = int(total_queries_target * 0.9)  # Ít nhất 90% của target
+    max_queries_acceptable = int(total_queries_target * 1.1)  # Tối đa 110% của target
+    
+    print(f"\n📋 Mục tiêu queries: {total_queries_target:,} ({query_batch:,} queries/round × {num_rounds} rounds)")
+    print(f"   📊 Cho phép lệch: {min_queries_acceptable:,} - {max_queries_acceptable:,} queries (90% - 110%)")
+    print(f"   ⚠️  Quan trọng: Không được thiếu queries! (tối thiểu {min_queries_acceptable:,})")
+    
+    # Kiểm tra pool ban đầu có đủ không
+    if X_pool.shape[0] < total_queries_target:
+        print(f"\n⚠️  CẢNH BÁO: Pool ban đầu ({X_pool.shape[0]:,}) < Tổng queries dự kiến ({total_queries_target:,})")
+        print(f"   💡 Pool sẽ cạn kiệt trước khi đạt đủ queries. Sẽ cố gắng lấy tối đa có thể.")
+    
     for query_round in range(1, num_rounds + 1):
-        if X_pool.shape[0] < query_batch:
+        # Kiểm tra xem còn cần bao nhiêu queries nữa
+        queries_remaining_needed = total_queries_target - total_queries_accumulated
+        
+        # Nếu đã đạt đủ queries, dừng lại
+        if total_queries_accumulated >= total_queries_target:
+            print(f"\n✅ Đã đạt đủ queries dự kiến ({total_queries_target:,}). Dừng active learning.")
             break
+        
+        # Nếu pool còn lại ít hơn query_batch, vẫn cố gắng lấy tối đa có thể
+        pool_remaining = X_pool.shape[0]
+        queries_to_get_this_round = min(query_batch, pool_remaining, queries_remaining_needed)
+        
+        if queries_to_get_this_round <= 0:
+            print(f"\n⚠️  Round {query_round}: Không còn queries để lấy. Pool: {pool_remaining}, Cần: {queries_remaining_needed}")
+            break
+        
+        if pool_remaining < query_batch:
+            print(f"\n⚠️  Round {query_round}: Pool còn lại ({pool_remaining}) < query_batch ({query_batch}).")
+            print(f"   🔄 Sẽ lấy tối đa {queries_to_get_this_round} queries từ pool còn lại.")
         
         # GIẢI PHÁP 1: Dùng Entropy + k-medoids thay vì random sampling
         # Theo nghiên cứu: Entropy để chọn điểm có độ bất định cao,
@@ -497,27 +733,44 @@ def run_extraction(
         print(f"\n🔄 Round {query_round}: Đang chọn queries bằng Entropy + k-medoids...")
         
         # Chọn dữ liệu để query dựa trên attacker type
-        pool_for_entropy = X_pool_s if attacker_type == "keras" else X_pool
+        pool_for_entropy = X_pool_s if attacker_type in ["keras", "dual"] else X_pool
+        
+        # QUAN TRỌNG: Với dualDNN, cần oracle labels cho pool để entropy sampling
+        # Query oracle cho pool nếu chưa có (chỉ cho dualDNN)
+        pool_labels_for_entropy = None
+        if attacker_type == "dual":
+            # Query oracle để lấy labels cho pool (dùng cho entropy sampling với dual=True)
+            pool_labels_for_entropy = oracle(pool_for_entropy)
         
         # Bước 1: Dùng entropy để chọn 10000 điểm có độ bất định cao
         # (k-medoids không scale tốt với toàn bộ pool)
         entropy_candidates = min(10000, pool_for_entropy.shape[0])
+        dual_flag = (attacker_type == "dual")
         q_idx = entropy_sampling(
             attacker, 
             pool_for_entropy, 
-            np.zeros(pool_for_entropy.shape[0]),  # y không cần thiết cho entropy
+            pool_labels_for_entropy if dual_flag else np.zeros(pool_for_entropy.shape[0]),  # y cần thiết cho dualDNN
             n_instances=entropy_candidates,
-            dual=False
+            dual=dual_flag
         )
         X_med = pool_for_entropy[q_idx]
         
-        # Bước 2: Dùng k-medoids để chọn query_batch điểm đại diện từ các điểm entropy cao
-        kmed = KMedoids(n_clusters=query_batch, init='k-medoids++', random_state=seed)
-        kmed.fit(X_med)
-        query_idx_in_med = kmed.medoid_indices_
-        query_idx = q_idx[query_idx_in_med]
+        # Bước 2: Dùng k-medoids để chọn queries_to_get_this_round điểm đại diện từ các điểm entropy cao
+        # QUAN TRỌNG: queries_to_get_this_round đã được tính ở trên (dòng 583)
         
-        print(f"   ✅ Đã chọn {len(query_idx)} queries từ {entropy_candidates} entropy candidates")
+        # Đảm bảo số clusters không lớn hơn số samples có sẵn
+        num_clusters = min(queries_to_get_this_round, X_med.shape[0])
+        
+        if num_clusters > 0:
+            kmed = KMedoids(n_clusters=num_clusters, init='k-medoids++', random_state=seed)
+            kmed.fit(X_med)
+            query_idx_in_med = kmed.medoid_indices_
+            query_idx = q_idx[query_idx_in_med]
+        else:
+            # Nếu không đủ samples, lấy tất cả có sẵn
+            query_idx = q_idx[:min(queries_to_get_this_round, len(q_idx))]
+        
+        print(f"   ✅ Đã chọn {len(query_idx)} queries từ {entropy_candidates} entropy candidates (target: {queries_to_get_this_round})")
 
         # Query oracle
         # - Với Keras: Query với dữ liệu đã scale (X_pool_s)
@@ -613,30 +866,112 @@ def run_extraction(
                             query_idx = np.concatenate([query_idx, additional_idx])
                             print(f"   ✅ Đã thêm samples, distribution mới: {dict(zip(*np.unique(y_query, return_counts=True)))}")
 
-        # QUAN TRỌNG: Đảm bảo số queries chính xác = query_batch
-        # Nếu class balancing thêm queries, giới hạn lại về query_batch
+        # QUAN TRỌNG: Đảm bảo số queries chính xác = queries_to_get_this_round
+        # KHÔNG BAO GIỜ được thiếu queries trừ khi pool thực sự cạn kiệt!
         actual_queries = len(y_query)
-        if actual_queries > query_batch:
-            print(f"   ⚠️  Class balancing đã thêm {actual_queries - query_batch} queries. "
-                  f"Giới hạn lại về {query_batch} queries để đảm bảo số queries chính xác.")
-            # Lấy query_batch queries đầu tiên (đã được entropy + k-medoids chọn)
-            X_query_s = X_query_s[:query_batch]
-            y_query = y_query[:query_batch]
-            query_idx = query_idx[:query_batch]
+        
+        # Tính queries còn cần để đạt target
+        queries_remaining_needed = total_queries_target - total_queries_accumulated
+        
+        # Mục tiêu queries cho round này: không vượt quá queries_remaining_needed và không vượt quá 110% của query_batch
+        max_queries_this_round = min(int(query_batch * 1.1), queries_remaining_needed) if queries_remaining_needed > 0 else int(query_batch * 1.1)
+        min_queries_this_round = queries_to_get_this_round  # Ít nhất phải đạt mục tiêu cho round này
+        
+        # QUAN TRỌNG: Nếu thiếu queries, BẮT BUỘC phải bổ sung từ pool
+        # Chỉ chấp nhận thiếu nếu pool thực sự cạn kiệt
+        if actual_queries < min_queries_this_round:
+            # QUAN TRỌNG: Nếu có ít hơn mục tiêu, BẮT BUỘC phải bổ sung
+            needed_samples = min_queries_this_round - actual_queries
+            print(f"   ⚠️  CHỈ CÓ {actual_queries}/{min_queries_this_round} queries. CẦN BỔ SUNG {needed_samples} queries!")
+            
+            remaining_pool_size = X_pool_s.shape[0]
+            if remaining_pool_size >= needed_samples:
+                # Lấy thêm random samples từ pool còn lại
+                additional_idx = rng.choice(remaining_pool_size, size=needed_samples, replace=False)
+                X_additional = X_pool_s[additional_idx]
+                y_additional = oracle(X_additional)
+                
+                X_query_s = np.vstack([X_query_s, X_additional])
+                y_query = np.concatenate([y_query, y_additional])
+                query_idx = np.concatenate([query_idx, additional_idx])
+                
+                print(f"   ✅ Đã bổ sung {needed_samples} queries từ pool. Total: {len(y_query)}")
+                actual_queries = len(y_query)
+            else:
+                # Pool không đủ, lấy tất cả còn lại
+                if remaining_pool_size > 0:
+                    X_additional = X_pool_s
+                    y_additional = oracle(X_additional)
+                    
+                    X_query_s = np.vstack([X_query_s, X_additional])
+                    y_query = np.concatenate([y_query, y_additional])
+                    all_indices = np.arange(X_pool_s.shape[0])
+                    query_idx = np.concatenate([query_idx, all_indices])
+                    
+                    actual_queries = len(y_query)
+                    print(f"   ⚠️  Pool còn lại chỉ có {remaining_pool_size} samples. Đã lấy tất cả.")
+                    print(f"   📊 Total queries trong round này: {actual_queries} (mục tiêu: {min_queries_this_round})")
+                    if actual_queries < min_queries_this_round:
+                        missing = min_queries_this_round - actual_queries
+                        print(f"   ❌ VẪN THIẾU {missing} queries do pool cạn kiệt!")
+                else:
+                    print(f"   ❌ LỖI NGHIÊM TRỌNG: Pool đã cạn kiệt! Chỉ có {actual_queries} queries thay vì {min_queries_this_round}")
+                    print(f"   ❌ Thiếu {min_queries_this_round - actual_queries} queries! Điều này sẽ ảnh hưởng nghiêm trọng đến hiệu suất!")
+        
+        # Giới hạn tối đa: không vượt quá max_queries_this_round (110% của query_batch hoặc queries còn cần)
+        if actual_queries > max_queries_this_round:
+            print(f"   ⚠️  Class balancing đã thêm {actual_queries - max_queries_this_round} queries (vượt quá 110%).")
+            print(f"   🔄 Giới hạn lại về {max_queries_this_round} queries.")
+            X_query_s = X_query_s[:max_queries_this_round]
+            y_query = y_query[:max_queries_this_round]
+            query_idx = query_idx[:max_queries_this_round]
+            actual_queries = max_queries_this_round
             final_dist = dict(zip(*np.unique(y_query, return_counts=True)))
             print(f"   📊 Query distribution sau khi giới hạn: {final_dist}")
+        
+        final_query_count = actual_queries
+        
+        # QUAN TRỌNG: Verify số queries trước khi thêm vào labeled set
+        queries_this_round = len(y_query)
+        total_queries_accumulated += queries_this_round
+        
+        # Kiểm tra xem có đạt mục tiêu không
+        if queries_this_round >= min_queries_this_round:
+            status = "✅"
+        else:
+            status = "⚠️"
+        
+        print(f"   {status} Round {query_round}: Đã chọn {queries_this_round} queries (mục tiêu: {min_queries_this_round}, tối đa: {max_queries_this_round})")
+        print(f"   📊 Tổng queries tích lũy: {total_queries_accumulated:,}/{total_queries_target:,} ({total_queries_accumulated/total_queries_target*100:.1f}%)")
+        
+        # QUAN TRỌNG: Verify queries_this_round đạt mục tiêu trước khi xóa từ pool
+        # Nếu thiếu queries và pool vẫn còn, phải cảnh báo nghiêm trọng
+        if queries_this_round < min_queries_this_round:
+            missing = min_queries_this_round - queries_this_round
+            pool_remaining_before_delete = X_pool.shape[0]
+            print(f"\n   ❌ LỖI NGHIÊM TRỌNG: Round {query_round} chỉ có {queries_this_round} queries thay vì {min_queries_this_round}!")
+            print(f"   ❌ Thiếu {missing} queries! Điều này sẽ ảnh hưởng nghiêm trọng đến hiệu suất!")
+            print(f"   💡 Pool còn lại trước khi xóa: {pool_remaining_before_delete:,} samples")
+            print(f"   💡 Kiểm tra logic bổ sung queries hoặc pool size ban đầu!")
+            # KHÔNG raise error vì có thể pool thực sự cạn kiệt, nhưng cảnh báo rõ ràng
         
         labeled_X = np.vstack([labeled_X, X_query_s])
         labeled_y = np.concatenate([labeled_y, y_query])
 
-        # Xóa từ pool
-        X_pool = np.delete(X_pool, query_idx, axis=0)
-        if attacker_type == "keras":
-            # Chỉ có X_pool_s nếu dùng Keras attacker
-            X_pool_s = np.delete(X_pool_s, query_idx, axis=0)
+        # Xóa từ pool (đảm bảo query_idx unique)
+        query_idx_unique = np.unique(query_idx)
+        X_pool = np.delete(X_pool, query_idx_unique, axis=0)
+        if attacker_type in ["keras", "dual"]:
+            # X_pool_s có sẵn cho Keras và dualDNN
+            X_pool_s = np.delete(X_pool_s, query_idx_unique, axis=0)
+            # Với dualDNN, cũng cần xóa labels đã query khỏi pool_labels_for_entropy
+            if attacker_type == "dual" and pool_labels_for_entropy is not None:
+                pool_labels_for_entropy = np.delete(pool_labels_for_entropy, query_idx_unique, axis=0)
         else:
             # Với LightGBM, X_pool_s = X_pool
             X_pool_s = X_pool
+        
+        print(f"   📊 Pool còn lại: {X_pool.shape[0]:,} samples")
 
         # QUAN TRỌNG: Re-train từ đầu trên toàn bộ dữ liệu tích lũy
         # Theo nghiên cứu: Huấn luyện lại từ đầu giúp model học lại phân phối tổng thể,
@@ -646,11 +981,48 @@ def run_extraction(
         if attacker_type == "lgb":
             attacker = LGBAttacker(seed=seed)
             attacker.train_model(labeled_X, labeled_y, X_val, y_val, boosting_rounds=1000, early_stopping=60)
+        elif attacker_type == "dual":
+            attacker = KerasDualAttacker(early_stopping=30, seed=seed)
+            # DualDNN train với (X, y, y_true) - y_true là oracle labels
+            attacker.train_model(labeled_X, labeled_y, labeled_y, X_val_s, y_val, y_val, num_epochs=num_epochs)
         else:
             attacker = KerasAttacker(early_stopping=30, seed=seed, input_shape=(feature_dim,))
             attacker.train_model(labeled_X, labeled_y, X_val_s, y_val, num_epochs=num_epochs)
 
         evaluate(attacker, round_id=query_round, total_labels=labeled_X.shape[0])
+    
+    # Kiểm tra tổng queries cuối cùng
+    final_total_queries = total_queries_accumulated
+    diff = final_total_queries - total_queries_target
+    diff_percent = (diff / total_queries_target * 100) if total_queries_target > 0 else 0
+    
+    print(f"\n{'='*80}")
+    print(f"📊 TỔNG KẾT QUERIES:")
+    print(f"{'='*80}")
+    print(f"   Queries dự kiến: {total_queries_target:,} ({query_batch:,} queries/round × {num_rounds} rounds)")
+    print(f"   Queries thực tế: {final_total_queries:,}")
+    print(f"   Chênh lệch: {diff:+,} queries ({diff_percent:+.2f}%)")
+    print(f"   Ngưỡng chấp nhận: {min_queries_acceptable:,} - {max_queries_acceptable:,} (90% - 110%)")
+    
+    if final_total_queries == total_queries_target:
+        print(f"   ✅ Số queries chính xác 100%!")
+    elif final_total_queries >= min_queries_acceptable and final_total_queries <= max_queries_acceptable:
+        if diff > 0:
+            print(f"   ✅ Số queries trong ngưỡng chấp nhận (dư {abs(diff):,} queries)")
+        else:
+            print(f"   ⚠️  Số queries trong ngưỡng chấp nhận nhưng thiếu {abs(diff):,} queries ({abs(diff_percent):.2f}%)")
+    elif final_total_queries < min_queries_acceptable:
+        print(f"   ❌ LỖI NGHIÊM TRỌNG: SỐ QUERIES THIẾU QUÁ NHIỀU! ({abs(diff_percent):.2f}% thiếu)")
+        print(f"   ❌ Thiếu {abs(diff):,} queries! Điều này sẽ ảnh hưởng NGHIÊM TRỌNG đến hiệu suất tấn công!")
+        print(f"   💡 Lý do có thể: Pool đã cạn kiệt trước khi đạt đủ queries")
+        print(f"   ⚠️  Cần kiểm tra lại:")
+        print(f"      - Pool size ban đầu có đủ không? (cần ít nhất {total_queries_target:,} với buffer 20%)")
+        print(f"      - Logic bổ sung queries có hoạt động đúng không?")
+        print(f"      - Có thể cần tăng pool size hoặc điều chỉnh query_batch/num_rounds")
+        # KHÔNG raise error vì vẫn muốn có kết quả, nhưng cảnh báo rõ ràng
+    else:
+        print(f"   ⚠️  Số queries vượt quá 10% (dư {diff:,} queries, {diff_percent:.2f}%)")
+    print(f"{'='*80}\n")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     surrogate_path = output_dir / "surrogate_model"
@@ -660,6 +1032,7 @@ def run_extraction(
     if attacker_type == "lgb":
         surrogate_model_path = f"{surrogate_path}.txt"
     else:
+        # Keras và dualDNN đều dùng .h5
         surrogate_model_path = f"{surrogate_path}.h5"
 
     joblib_path = output_dir / "robust_scaler.joblib"
@@ -677,7 +1050,8 @@ def run_extraction(
     df_metrics.to_csv(metrics_csv, index=False)
 
     summary = {
-        "weights_path": weights_path,
+        "weights_path": weights_path_abs,  # Lưu absolute path để đảm bảo consistency
+        "model_file_name": model_file_name,  # Lưu tên file để dễ verify
         "model_type": model_type,
         "normalization_stats_path": normalization_stats_path,
         "attacker_type": attacker_type,

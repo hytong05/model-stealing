@@ -72,10 +72,12 @@ def create_dnn2(seed=42, mc=False):
     x = tf.keras.layers.Dropout(0.3)(x, training=mc)
 
     outputs = tf.keras.layers.Dense(1)(x)
-    out = tf.add(outputs, input2)
+    # Sử dụng Add layer thay vì tf.add() để tương thích với KerasTensor
+    out = tf.keras.layers.Add()([outputs, input2])
 
     # out = tf.clip_by_value(out, 0, 1)
-    out = tf.sigmoid(out)
+    # Sử dụng Activation layer thay vì tf.sigmoid() để tương thích với KerasTensor
+    out = tf.keras.layers.Activation('sigmoid')(out)
     model = tf.keras.Model((input1, input2), out)
 
     bce = tf.keras.losses.BinaryCrossentropy(from_logits=False)

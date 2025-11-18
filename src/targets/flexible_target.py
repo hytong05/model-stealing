@@ -845,10 +845,17 @@ class FlexibleLGBTarget:
         # LightGBM predict tự động xử lý (1, n_features) hoặc (n_samples, n_features)
         
         # Predict
-        prediction_prob = self.model.predict(
-            features_array, 
-            num_iteration=self.model.best_iteration if hasattr(self.model, 'best_iteration') else None
-        )
+        # Xử lý num_iteration giống code mẫu của người dùng:
+        # - Nếu model có best_iteration và best_iteration > 0, dùng best_iteration
+        # - Nếu best_iteration = -1 hoặc không có, dùng None (tất cả trees)
+        num_iteration = None
+        if hasattr(self.model, 'best_iteration') and self.model.best_iteration is not None:
+            if self.model.best_iteration > 0:
+                num_iteration = self.model.best_iteration
+            # Nếu best_iteration = -1, dùng None (tất cả trees)
+            # Điều này đảm bảo tương thích với model không có best_iteration được lưu
+        
+        prediction_prob = self.model.predict(features_array, num_iteration=num_iteration)
         
         # Đảm bảo output là 1D array
         if prediction_prob.ndim > 1:
