@@ -48,7 +48,6 @@ ENV/
 
 # Logs and outputs
 logs/
-output/
 *.log
 
 # OS

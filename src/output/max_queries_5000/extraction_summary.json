@@ -1,0 +1,68 @@
+{
+  "weights_path": "/home/hytong/Documents/model_extraction_malware/src/final_model.h5",
+  "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_5000/surrogate_model.h5",
+  "scaler_path": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_5000/robust_scaler.joblib",
+  "metrics_csv": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_5000/extraction_metrics.csv",
+  "metrics": [
+    {
+      "round": 0,
+      "labels_used": 2000,
+      "surrogate_acc": 0.9855,
+      "surrogate_auc": 0.7990684824485964,
+      "surrogate_precision": 0.9893536121673003,
+      "surrogate_recall": 0.9959173258484307,
+      "surrogate_f1": 0.9926246185147508,
+      "agreement_with_target": 0.9855
+    },
+    {
+      "round": 1,
+      "labels_used": 3000,
+      "surrogate_acc": 0.987,
+      "surrogate_auc": 0.8201985263310432,
+      "surrogate_precision": 0.987887963663891,
+      "surrogate_recall": 0.9989793314621077,
+      "surrogate_f1": 0.9934026896726719,
+      "agreement_with_target": 0.987
+    },
+    {
+      "round": 2,
+      "labels_used": 4000,
+      "surrogate_acc": 0.98925,
+      "surrogate_auc": 0.9131203160292214,
+      "surrogate_precision": 0.9908814589665653,
+      "surrogate_recall": 0.9982138300586885,
+      "surrogate_f1": 0.9945341299097495,
+      "agreement_with_target": 0.98925
+    },
+    {
+      "round": 3,
+      "labels_used": 5000,
+      "surrogate_acc": 0.988,
+      "surrogate_auc": 0.9931734915999609,
+      "surrogate_precision": 0.9888860823440263,
+      "surrogate_recall": 0.9989793314621077,
+      "surrogate_f1": 0.993907083015994,
+      "agreement_with_target": 0.988
+    },
+    {
+      "round": 4,
+      "labels_used": 6000,
+      "surrogate_acc": 0.98925,
+      "surrogate_auc": 0.9834519387976902,
+      "surrogate_precision": 0.9903846153846154,
+      "surrogate_recall": 0.9987241643276346,
+      "surrogate_f1": 0.9945369076356244,
+      "agreement_with_target": 0.98925
+    },
+    {
+      "round": 5,
+      "labels_used": 7000,
+      "surrogate_acc": 0.98975,
+      "surrogate_auc": 0.9903902797072823,
+      "surrogate_precision": 0.9911347517730497,
+      "surrogate_recall": 0.9984689971931615,
+      "surrogate_f1": 0.9947883564255752,
+      "agreement_with_target": 0.98975
+    }
+  ]
+}

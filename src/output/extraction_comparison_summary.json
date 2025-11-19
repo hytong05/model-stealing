@@ -1,0 +1,53 @@
+[
+  {
+    "config_name": "max_queries_10000",
+    "description": "Tối đa 10,000 queries (2000 queries/round × 5 rounds)",
+    "total_queries": 10000,
+    "query_batch": 2000,
+    "num_rounds": 5,
+    "total_labels_used": 12000,
+    "final_accuracy": 0.9855,
+    "final_auc": 0.9600931202530251,
+    "final_precision": 0.9923488905891354,
+    "final_recall": 0.9928553202347538,
+    "final_f1": 0.9926020408163265,
+    "final_agreement": 0.9855,
+    "output_dir": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_10000",
+    "metrics_csv": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_10000/extraction_metrics.csv",
+    "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_10000/surrogate_model.h5"
+  },
+  {
+    "config_name": "max_queries_5000",
+    "description": "Tối đa 5,000 queries (1000 queries/round × 5 rounds)",
+    "total_queries": 5000,
+    "query_batch": 1000,
+    "num_rounds": 5,
+    "total_labels_used": 7000,
+    "final_accuracy": 0.98975,
+    "final_auc": 0.9903902797072823,
+    "final_precision": 0.9911347517730497,
+    "final_recall": 0.9984689971931615,
+    "final_f1": 0.9947883564255752,
+    "final_agreement": 0.98975,
+    "output_dir": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_5000",
+    "metrics_csv": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_5000/extraction_metrics.csv",
+    "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_5000/surrogate_model.h5"
+  },
+  {
+    "config_name": "max_queries_2000",
+    "description": "Tối đa 2,000 queries (2000 queries/round × 1 round)",
+    "total_queries": 2000,
+    "query_batch": 2000,
+    "num_rounds": 1,
+    "total_labels_used": 4000,
+    "final_accuracy": 0.98575,
+    "final_auc": 0.8797973783939592,
+    "final_precision": 0.9859084046300957,
+    "final_recall": 0.999744832865527,
+    "final_f1": 0.9927784112504751,
+    "final_agreement": 0.98575,
+    "output_dir": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_2000",
+    "metrics_csv": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_2000/extraction_metrics.csv",
+    "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_2000/surrogate_model.h5"
+  }
+]

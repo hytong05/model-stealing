@@ -1,0 +1,81 @@
+{
+  "test_info": {
+    "file": "/home/hytong/Documents/model_extraction_malware/src/train_ember_2018_v2_features_label_minus1.parquet",
+    "num_samples": 10000,
+    "target_distribution": {
+      "0": 121,
+      "1": 9879
+    }
+  },
+  "results": [
+    {
+      "model_name": "max_queries_10000",
+      "accuracy": 0.9861,
+      "agreement": 0.9861,
+      "auc": 0.9338127708914226,
+      "precision": 0.9949186991869918,
+      "recall": 0.990990990990991,
+      "f1_score": 0.9929509610020792,
+      "confusion_matrix": {
+        "tn": 71,
+        "fp": 50,
+        "fn": 89,
+        "tp": 9790
+      },
+      "target_distribution": {
+        "0": 121,
+        "1": 9879
+      },
+      "surrogate_distribution": {
+        "0": 160,
+        "1": 9840
+      }
+    },
+    {
+      "model_name": "max_queries_5000",
+      "accuracy": 0.9937,
+      "agreement": 0.9937,
+      "auc": 0.9911344625338496,
+      "precision": 0.9948578342407743,
+      "recall": 0.9987853021560886,
+      "f1_score": 0.9968176996514624,
+      "confusion_matrix": {
+        "tn": 70,
+        "fp": 51,
+        "fn": 12,
+        "tp": 9867
+      },
+      "target_distribution": {
+        "0": 121,
+        "1": 9879
+      },
+      "surrogate_distribution": {
+        "0": 82,
+        "1": 9918
+      }
+    },
+    {
+      "model_name": "max_queries_2000",
+      "accuracy": 0.9901,
+      "agreement": 0.9901,
+      "auc": 0.7744275987381196,
+      "precision": 0.9906682721252258,
+      "recall": 0.9993926510780443,
+      "f1_score": 0.9950113378684807,
+      "confusion_matrix": {
+        "tn": 28,
+        "fp": 93,
+        "fn": 6,
+        "tp": 9873
+      },
+      "target_distribution": {
+        "0": 121,
+        "1": 9879
+      },
+      "surrogate_distribution": {
+        "0": 34,
+        "1": 9966
+      }
+    }
+  ]
+}

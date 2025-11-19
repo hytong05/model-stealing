@@ -1,0 +1,60 @@
+================================================================================
+BÁO CÁO ĐÁNH GIÁ ĐỘ TƯƠNG ĐỒNG GIỮA TARGET VÀ SURROGATE MODELS
+================================================================================
+
+THÔNG TIN DỮ LIỆU TEST:
+--------------------------------------------------------------------------------
+File: /home/hytong/Documents/model_extraction_malware/src/train_ember_2018_v2_features_label_minus1.parquet
+Số samples: 10,000
+Phân bố nhãn từ target model: {0: 121, 1: 9879}
+
+KẾT QUẢ ĐÁNH GIÁ:
+--------------------------------------------------------------------------------
+
+MAX QUERIES 10000:
+  Accuracy: 0.9861 (98.61%)
+  Agreement: 0.9861 (98.61%)
+  AUC: 0.9338
+  Precision: 0.9949
+  Recall: 0.9910
+  F1-score: 0.9930
+  Confusion Matrix:
+    TN: 71, FP: 50
+    FN: 89, TP: 9790
+  Target distribution: {0: 121, 1: 9879}
+  Surrogate distribution: {0: 160, 1: 9840}
+
+MAX QUERIES 5000:
+  Accuracy: 0.9937 (99.37%)
+  Agreement: 0.9937 (99.37%)
+  AUC: 0.9911
+  Precision: 0.9949
+  Recall: 0.9988
+  F1-score: 0.9968
+  Confusion Matrix:
+    TN: 70, FP: 51
+    FN: 12, TP: 9867
+  Target distribution: {0: 121, 1: 9879}
+  Surrogate distribution: {0: 82, 1: 9918}
+
+MAX QUERIES 2000:
+  Accuracy: 0.9901 (99.01%)
+  Agreement: 0.9901 (99.01%)
+  AUC: 0.7744
+  Precision: 0.9907
+  Recall: 0.9994
+  F1-score: 0.9950
+  Confusion Matrix:
+    TN: 28, FP: 93
+    FN: 6, TP: 9873
+  Target distribution: {0: 121, 1: 9879}
+  Surrogate distribution: {0: 34, 1: 9966}
+
+
+================================================================================
+SO SÁNH CÁC SURROGATE MODELS:
+================================================================================
+
+Best Accuracy: max_queries_5000 (0.9937)
+Best Agreement: max_queries_5000 (0.9937)
+Best AUC: max_queries_5000 (0.9911)

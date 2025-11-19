@@ -1,0 +1,42 @@
+{
+  "weights_path": "/home/hytong/Documents/model_extraction_malware/src/CSE.h5",
+  "model_file_name": "CSE.h5",
+  "model_type": "h5",
+  "normalization_stats_path": null,
+  "attacker_type": "dual",
+  "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/output/max_queries_2000_H5/surrogate_model.h5",
+  "scaler_path": "/home/hytong/Documents/model_extraction_malware/output/max_queries_2000_H5/robust_scaler.joblib",
+  "metrics_csv": "/home/hytong/Documents/model_extraction_malware/output/max_queries_2000_H5/extraction_metrics.csv",
+  "metrics": [
+    {
+      "round": 0,
+      "labels_used": 2000,
+      "queries_used": -1000,
+      "optimal_threshold": 0.1,
+      "surrogate_acc": 0.61625,
+      "surrogate_acc_vs_oracle": 0.94,
+      "surrogate_balanced_acc": 0.6155316382909573,
+      "surrogate_auc": 0.6675636890922273,
+      "surrogate_precision": 0.6598735066760365,
+      "surrogate_recall": 0.47185929648241204,
+      "surrogate_f1": 0.5502490477585702,
+      "agreement_with_target": 0.94,
+      "oracle_acc_vs_gt": 0.59875
+    },
+    {
+      "round": 1,
+      "labels_used": 4000,
+      "queries_used": 1000,
+      "optimal_threshold": 0.11,
+      "surrogate_acc": 0.612,
+      "surrogate_acc_vs_oracle": 0.95575,
+      "surrogate_balanced_acc": 0.6113602840071002,
+      "surrogate_auc": 0.6331614540363509,
+      "surrogate_precision": 0.6473755047106325,
+      "surrogate_recall": 0.4834170854271357,
+      "surrogate_f1": 0.5535097813578826,
+      "agreement_with_target": 0.95575,
+      "oracle_acc_vs_gt": 0.59875
+    }
+  ]
+}

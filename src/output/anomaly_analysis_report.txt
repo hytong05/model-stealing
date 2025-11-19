@@ -1,0 +1,91 @@
+================================================================================
+BÁO CÁO PHÂN TÍCH ĐIỂM BẤT THƯỜNG TRONG LOG EXTRACTION
+Ngày phân tích: 2025-11-11
+================================================================================
+
+1. PHÂN TÍCH METRICS QUA CÁC ROUND:
+--------------------------------------------------------------------------------
+Tất cả các round (0-5) đều có cùng pattern:
+  - Labels used: Tăng từ 2000 → 12000
+  - Accuracy: 1.0000 (100%)
+  - AUC: NaN (không xác định)
+  - Precision: 0.0000
+  - Recall: 0.0000
+  - F1: 0.0000
+  - Agreement: 1.0000 (100%)
+
+2. ĐIỂM BẤT THƯỜNG PHÁT HIỆN:
+--------------------------------------------------------------------------------
+
+⚠️  BẤT THƯỜNG 1: Accuracy = 1.0 nhưng Precision/Recall/F1 = 0.0
+   - Nguyên nhân: Tất cả nhãn trong ground truth đều là 0 (negative class)
+   - Khi không có positive class, sklearn trả về precision/recall/f1 = 0.0
+   - Accuracy = 1.0 vì model dự đoán đúng tất cả (đều là 0)
+   - Đây là trường hợp "trivial classifier" - luôn dự đoán class chiếm đa số
+
+⚠️  BẤT THƯỜNG 2: AUC = NaN
+   - Nguyên nhân: Chỉ có 1 class trong y_true (tất cả đều là 0)
+   - ROC AUC không thể tính khi chỉ có 1 class
+   - Warning trong log: "Only one class is present in y_true. ROC AUC score is not defined"
+   - Đây là hành vi đúng của sklearn khi chỉ có 1 class
+
+⚠️  BẤT THƯỜNG 3: Agreement = 1.0 nhưng không có ý nghĩa thực tế
+   - Nguyên nhân: Cả oracle và surrogate đều trả về toàn bộ nhãn 0
+   - Agreement cao nhưng không phản ánh khả năng học của surrogate
+   - Surrogate chỉ học được pattern 'luôn trả về 0'
+   - Không thể đánh giá khả năng extraction thực tế
+
+⚠️  BẤT THƯỜNG 4: Oracle không trả về nhãn 1 cho dữ liệu synthetic
+   - Dữ liệu Gaussian noise (N(0,1), clip [-4,4]) không tạo ra mẫu nào được coi là malware
+   - Probability của class 1 rất thấp:
+     * Mean: ~0.14
+     * Max: ~0.21
+     * Range: [0.1063, 0.2124]
+   - Với threshold 0.5, không có mẫu nào được phân loại là malware
+   - Ngay cả với threshold 0.2, chỉ có 3/2000 mẫu được phân loại là malware
+
+3. PHÂN TÍCH TRAINING LOG:
+--------------------------------------------------------------------------------
+   - Loss giảm từ ~0.9 xuống ~0.0002-0.0003 (quá thấp, có thể overfitting)
+   - Training accuracy luôn = 1.0 (không thay đổi qua các epoch)
+   - Validation accuracy luôn = 1.0
+   - Điều này cho thấy model học được pattern 'luôn dự đoán 0' rất nhanh
+   - Model không học được gì về class 1 vì không có mẫu nào trong training set
+
+4. PHÂN TÍCH KỸ THUẬT:
+--------------------------------------------------------------------------------
+   - Pipeline extraction hoạt động ĐÚNG về mặt kỹ thuật
+   - Code không có lỗi, logic đúng
+   - Vấn đề nằm ở dữ liệu: dữ liệu synthetic không phù hợp
+   - Oracle (target model) được load và chạy đúng
+   - Surrogate được train đúng, nhưng chỉ học được pattern trivial
+
+5. KẾT LUẬN:
+--------------------------------------------------------------------------------
+   ❌ Pipeline extraction đang hoạt động ĐÚNG về mặt kỹ thuật
+   ❌ Nhưng dữ liệu synthetic không phù hợp để đánh giá extraction
+   ❌ Oracle (target model) không trả về nhãn 1 cho bất kỳ mẫu nào
+   ❌ Surrogate chỉ học được pattern 'luôn trả về 0'
+   ❌ Metrics không phản ánh đúng khả năng extraction thực tế
+   ❌ Không thể đánh giá hiệu quả của extraction attack với dữ liệu hiện tại
+
+6. KHUYẾN NGHỊ:
+--------------------------------------------------------------------------------
+   ✓ Cần sử dụng dữ liệu thực từ EMBER/SOREL dataset thay vì Gaussian noise
+   ✓ Hoặc điều chỉnh sampling strategy để tìm mẫu có nhãn 1
+   ✓ Hoặc sử dụng adversarial sampling để ép oracle trả về nhãn 1
+   ✓ Hoặc giảm threshold của oracle xuống < 0.2 để có một số mẫu positive
+   ✓ Metrics hiện tại không đáng tin cậy cho đánh giá extraction
+   ✓ Cần có cả positive và negative samples để đánh giá đúng
+
+7. CHI TIẾT KỸ THUẬT:
+--------------------------------------------------------------------------------
+   - Oracle threshold: 0.5 (mặc định)
+   - Dữ liệu: Gaussian N(0,1), clip [-4,4], sau đó scale với RobustScaler
+   - Probability distribution của oracle:
+     * Class 0: [0.7876, 0.8937]
+     * Class 1: [0.1063, 0.2124]
+   - Không có mẫu nào có prob(class 1) > 0.5
+   - Surrogate học được: output luôn gần [1.0, 0.0] (softmax)
+
+================================================================================

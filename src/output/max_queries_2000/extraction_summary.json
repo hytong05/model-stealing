@@ -1,0 +1,28 @@
+{
+  "weights_path": "/home/hytong/Documents/model_extraction_malware/src/final_model.h5",
+  "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_2000/surrogate_model.h5",
+  "scaler_path": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_2000/robust_scaler.joblib",
+  "metrics_csv": "/home/hytong/Documents/model_extraction_malware/src/output/max_queries_2000/extraction_metrics.csv",
+  "metrics": [
+    {
+      "round": 0,
+      "labels_used": 2000,
+      "surrogate_acc": 0.98575,
+      "surrogate_auc": 0.8352155847265142,
+      "surrogate_precision": 0.9859084046300957,
+      "surrogate_recall": 0.999744832865527,
+      "surrogate_f1": 0.9927784112504751,
+      "agreement_with_target": 0.98575
+    },
+    {
+      "round": 1,
+      "labels_used": 4000,
+      "surrogate_acc": 0.98575,
+      "surrogate_auc": 0.8797973783939592,
+      "surrogate_precision": 0.9859084046300957,
+      "surrogate_recall": 0.999744832865527,
+      "surrogate_f1": 0.9927784112504751,
+      "agreement_with_target": 0.98575
+    }
+  ]
+}
