@@ -1,0 +1,45 @@
+{
+  "oracle_source": "/home/hytong/Documents/model_extraction_malware/artifacts/targets/LEE.lgb",
+  "model_file_name": "LEE.lgb",
+  "model_type": "lgb",
+  "normalization_stats_path": "auto-detected",
+  "attacker_type": "lgb",
+  "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/output/LEE-ember-LGB-2000/surrogate_model.txt",
+  "scaler_path": null,
+  "metrics_csv": "/home/hytong/Documents/model_extraction_malware/output/LEE-ember-LGB-2000/extraction_metrics.csv",
+  "metrics": [
+    {
+      "round": 0,
+      "labels_used": 2000,
+      "queries_used": -1000,
+      "optimal_threshold": 0.75,
+      "surrogate_acc": 0.8915,
+      "surrogate_acc_vs_oracle": 0.935,
+      "surrogate_balanced_acc": 0.8914747868696717,
+      "surrogate_auc": 0.9604727618190455,
+      "surrogate_precision": 0.8945233265720081,
+      "surrogate_recall": 0.8864321608040201,
+      "surrogate_f1": 0.8904593639575972,
+      "agreement_with_target": 0.935,
+      "oracle_acc_vs_gt": 0.922
+    },
+    {
+      "round": 1,
+      "labels_used": 4000,
+      "queries_used": 1000,
+      "optimal_threshold": 0.8,
+      "surrogate_acc": 0.905,
+      "surrogate_acc_vs_oracle": 0.9475,
+      "surrogate_balanced_acc": 0.9049351233780845,
+      "surrogate_auc": 0.9691917297932449,
+      "surrogate_precision": 0.9149484536082474,
+      "surrogate_recall": 0.8919597989949749,
+      "surrogate_f1": 0.9033078880407125,
+      "agreement_with_target": 0.9475,
+      "oracle_acc_vs_gt": 0.922
+    }
+  ],
+  "total_queries_target": 2000,
+  "total_queries_actual": 2000,
+  "query_gap_reason": "on_target"
+}

@@ -28,7 +28,7 @@ class FlexibleKerasTarget:
     có nhiều đặc trưng hơn model yêu cầu (Interface Compliance).
     """
     
-    def __init__(self, weights_path, feature_dim=2381, threshold=0.5, name="flexible-keras-target"):
+    def __init__(self, weights_path, feature_dim=2381, threshold=0.5, name="flexible-keras-target", normalization_stats_path=None):
         self.model_endpoint = weights_path
         self.model_threshold = threshold
         self.name = name
@@ -41,6 +41,15 @@ class FlexibleKerasTarget:
         self._input_shape = self._detect_input_shape()
         # Lấy số đặc trưng yêu cầu thực tế của model
         self._required_feature_dim = self._get_actual_required_feature_dim()
+        
+        # Load normalization stats (nếu có)
+        self.feature_means = None
+        self.feature_stds = None
+        self.feature_cols = None
+        self.use_normalization = False
+        
+        if normalization_stats_path is not None:
+            self._load_normalization_stats(normalization_stats_path)
     
     def _load_model_flexible(self):
         """
@@ -556,10 +565,84 @@ class FlexibleKerasTarget:
                 f"Cannot pad features - please provide correct feature set."
             )
     
+    def _load_normalization_stats(self, stats_path):
+        """Load normalization statistics từ file .npz"""
+        try:
+            stats = np.load(stats_path, allow_pickle=True)
+            
+            if 'feature_means' in stats:
+                self.feature_means = stats['feature_means']
+            else:
+                raise ValueError(f"File {stats_path} không chứa 'feature_means'")
+            
+            if 'feature_stds' in stats:
+                self.feature_stds = stats['feature_stds']
+            else:
+                raise ValueError(f"File {stats_path} không chứa 'feature_stds'")
+            
+            if 'feature_cols' in stats:
+                self.feature_cols = stats['feature_cols'].tolist() if hasattr(stats['feature_cols'], 'tolist') else stats['feature_cols']
+            else:
+                self.feature_cols = None
+            
+            self.use_normalization = True
+            print(f"✅ Loaded normalization stats from {stats_path}")
+            print(f"   Feature means shape: {self.feature_means.shape}")
+            print(f"   Feature stds shape: {self.feature_stds.shape}")
+            if self.feature_cols is not None:
+                print(f"   Feature columns: {len(self.feature_cols)}")
+        except Exception as e:
+            print(f"⚠️  Warning: Cannot load normalization stats from {stats_path}: {type(e).__name__}: {str(e)}")
+            print(f"   Will use features without normalization")
+            self.use_normalization = False
+    
+    def _normalize_features(self, X):
+        """
+        Normalize features giống như trong notebook:
+        X = (X - feature_means) / feature_stds
+        """
+        if not self.use_normalization:
+            return X
+        
+        X = np.asarray(X, dtype=np.float32)
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
+        
+        # Align features trước khi normalize
+        X_aligned = self._align_features(X)
+        
+        # Xử lý normalization stats
+        required_dim = self._required_feature_dim if self._required_feature_dim is not None else X_aligned.shape[1]
+        
+        if self.feature_means.shape[0] >= required_dim:
+            # Stats có đủ hoặc nhiều hơn - chỉ lấy số features model cần
+            feature_means_used = self.feature_means[:required_dim]
+            feature_stds_used = self.feature_stds[:required_dim]
+        else:
+            # Stats có ít hơn model cần - dùng toàn bộ stats
+            feature_means_used = self.feature_means
+            feature_stds_used = self.feature_stds
+            # Cắt features_array để khớp với stats
+            if X_aligned.shape[1] > feature_means_used.shape[0]:
+                X_aligned = X_aligned[:, :feature_means_used.shape[0]]
+        
+        # Normalize
+        features_normalized = (X_aligned - feature_means_used) / feature_stds_used
+        features_normalized = np.nan_to_num(features_normalized, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        return features_normalized
+    
     def _prepare_input(self, X):
         """Chuẩn bị input phù hợp với model architecture"""
+        # Normalize nếu có stats
+        if self.use_normalization:
+            X = self._normalize_features(X)
+        else:
+            # Không normalize, chỉ align features
+            pass
         # Đồng bộ hóa số chiều đặc trưng trước khi chuẩn bị input
         X = self._align_features(X)
+        
         X = np.asarray(X, dtype=np.float32)
         if X.ndim == 1:
             X = X.reshape(1, -1)
@@ -742,43 +825,42 @@ class FlexibleLGBTarget:
     
     def _normalize_features(self, X):
         """
-        Normalize features giống như code của người dùng:
+        Normalize features giống như code trong LSE.ipynb:
         - (features_array - feature_means) / feature_stds
         - Xử lý NaN và infinity
         
-        Lưu ý: Nếu normalization stats có nhiều features hơn model yêu cầu,
-        chỉ normalize số features mà model cần (từ đầu).
+        QUAN TRỌNG: Chỉ normalize nếu stats KHỚP với số features model yêu cầu.
+        Nếu stats không khớp (ví dụ: stats có 2381 nhưng model cần 108),
+        có thể stats sai hoặc model được train trên dataset khác → BỎ QUA normalization.
         """
         if not self.use_normalization:
             return X
         
         # Đảm bảo X đã align với model requirements trước (số features model cần)
-        # Điều này quan trọng vì model có thể chỉ cần subset của features
-        X_aligned = self._align_features(X)  # Cắt xuống số features model cần
+        X_aligned = self._align_features(X)
         
-        # Nếu normalization stats có nhiều features hơn model cần,
-        # chỉ lấy số features đầu tiên từ stats tương ứng với số features model cần
-        if self.feature_means.shape[0] > self._required_feature_dim:
-            # Normalization stats có nhiều features hơn model cần
-            # Chỉ normalize với stats của số features đầu tiên
-            feature_means_used = self.feature_means[:self._required_feature_dim]
-            feature_stds_used = self.feature_stds[:self._required_feature_dim]
-        elif self.feature_means.shape[0] == self._required_feature_dim:
-            # Normalization stats khớp với số features model cần
+        # QUAN TRỌNG: Kiểm tra xem stats có khớp với model requirements không
+        stats_feature_dim = self.feature_means.shape[0]
+        
+        if stats_feature_dim == self._required_feature_dim:
+            # Stats khớp hoàn toàn - normalize bình thường
             feature_means_used = self.feature_means
             feature_stds_used = self.feature_stds
         else:
-            # Normalization stats có ít features hơn model cần - không nên xảy ra
-            raise ValueError(
-                f"Normalization stats chỉ có {self.feature_means.shape[0]} features, "
-                f"nhưng model cần {self._required_feature_dim} features. "
-                f"Vui lòng kiểm tra lại file normalization stats."
-            )
+            # Stats KHÔNG khớp - BỎ QUA normalization
+            # Ví dụ: Model train trên SOMLAP (108) nhưng stats có EMBER (2381)
+            # Không thể normalize với stats sai này vì features không tương ứng
+            print(f"⚠️  WARNING: Normalization stats mismatch trong _normalize_features!")
+            print(f"   - Model requires: {self._required_feature_dim} features")
+            print(f"   - Stats has: {stats_feature_dim} features")
+            print(f"   - ⚠️  BỎ QUA normalization - stats không khớp với model")
+            # Trả về features đã align, không normalize
+            return X_aligned
         
-        # Normalize với stats đã được chọn
+        # Normalize với stats đã khớp
         features_normalized = (X_aligned - feature_means_used) / feature_stds_used
         
-        # Xử lý NaN và infinity (giống code của người dùng)
+        # Xử lý NaN và infinity (giống code trong LSE.ipynb)
         features_normalized = np.nan_to_num(features_normalized, nan=0.0, posinf=0.0, neginf=0.0)
         
         return features_normalized
@@ -809,37 +891,48 @@ class FlexibleLGBTarget:
                 features_array = features_array.reshape(1, -1)
         
         # QUAN TRỌNG: Xử lý normalization và alignment
-        # Logic: Model cần 108 features, nhưng normalization stats có thể có 2381 features
-        # Giải pháp: Normalize với số features model cần (108 đầu tiên từ stats)
-        #            rồi cắt bỏ features thừa từ input
+        # Logic: Chỉ normalize nếu stats khớp với số features model yêu cầu
+        #        Nếu stats không khớp (ví dụ: stats có 2381 nhưng model cần 108), 
+        #        có thể stats sai hoặc model được train trên dataset khác
+        
+        # Align features trước tiên
+        features_array_aligned = self._align_features(features_array)
         
         if self.use_normalization:
-            # Bước 1: Align input với số features model cần (cắt bỏ features thừa)
-            # Điều này đảm bảo ta chỉ normalize với số features mà model thực sự cần
-            features_array_aligned = self._align_features(features_array)  # Cắt xuống 108 features
+            # QUAN TRỌNG: Kiểm tra xem stats có khớp với model requirements không
+            # Nếu stats có số features khác với model requirements, 
+            # có thể stats sai hoặc model được train trên dataset khác
+            stats_feature_dim = self.feature_means.shape[0]
             
-            # Bước 2: Normalize với stats tương ứng
-            # Nếu stats có nhiều features hơn model cần, chỉ lấy số features đầu tiên
-            if self.feature_means.shape[0] >= self._required_feature_dim:
-                # Stats có đủ hoặc nhiều hơn - chỉ lấy số features model cần
-                feature_means_used = self.feature_means[:self._required_feature_dim]
-                feature_stds_used = self.feature_stds[:self._required_feature_dim]
-            else:
-                # Stats có ít hơn model cần - dùng toàn bộ stats
+            if stats_feature_dim == self._required_feature_dim:
+                # Stats khớp hoàn toàn - normalize bình thường
                 feature_means_used = self.feature_means
                 feature_stds_used = self.feature_stds
-                # Cắt features_array để khớp với stats
-                if features_array_aligned.shape[1] > feature_means_used.shape[0]:
-                    features_array_aligned = features_array_aligned[:, :feature_means_used.shape[0]]
-            
-            # Normalize
-            features_normalized = (features_array_aligned - feature_means_used) / feature_stds_used
-            features_normalized = np.nan_to_num(features_normalized, nan=0.0, posinf=0.0, neginf=0.0)
-            
-            features_array = features_normalized
+                
+                # Normalize
+                features_normalized = (features_array_aligned - feature_means_used) / feature_stds_used
+                features_normalized = np.nan_to_num(features_normalized, nan=0.0, posinf=0.0, neginf=0.0)
+                features_array = features_normalized
+            else:
+                # Stats KHÔNG khớp - BỎ QUA normalization
+                # Điều này xảy ra khi stats có features khác với model requirements
+                # Ví dụ: Model train trên SOMLAP (108) nhưng stats có EMBER (2381)
+                # → Không thể normalize với stats sai này
+                print(f"⚠️  WARNING: Normalization stats mismatch!")
+                print(f"   - Model requires: {self._required_feature_dim} features")
+                print(f"   - Stats has: {stats_feature_dim} features")
+                if stats_feature_dim > self._required_feature_dim:
+                    print(f"   - ⚠️  Stats có nhiều features hơn model cần")
+                else:
+                    print(f"   - ⚠️  Stats có ít features hơn model cần")
+                print(f"   - ⚠️  Stats không khớp - sẽ BỎ QUA normalization và dùng features trực tiếp")
+                print(f"   - 💡 Điều này có thể do stats sai hoặc model được train trên dataset khác")
+                print(f"   - 💡 Vui lòng kiểm tra và tạo normalization stats đúng cho model này")
+                # Dùng features đã align, không normalize
+                features_array = features_array_aligned
         else:
             # Không có normalization - chỉ align
-            features_array = self._align_features(features_array)
+            features_array = features_array_aligned
         
         # Reshape cho LightGBM (cần shape (n_samples, n_features))
         # LightGBM predict tự động xử lý (1, n_features) hoặc (n_samples, n_features)

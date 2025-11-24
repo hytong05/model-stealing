@@ -133,7 +133,9 @@ def mc_dropout(
         monitor="val_loss", patience=30
     )
     if dual:
-        model = create_dnn2(mc=True)
+        # Sử dụng input_shape từ X_seed
+        input_shape = (X_seed.shape[1],) if len(X_seed.shape) > 1 else (X_seed.shape[0],)
+        model = create_dnn2(mc=True, input_shape=input_shape)
 
         model.fit(
             (X_seed, y_seed_true),

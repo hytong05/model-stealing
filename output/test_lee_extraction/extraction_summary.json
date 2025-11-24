@@ -1,0 +1,42 @@
+{
+  "oracle_source": "/home/hytong/Documents/model_extraction_malware/artifacts/targets/LEE.lgb",
+  "model_file_name": "LEE.lgb",
+  "model_type": "lgb",
+  "normalization_stats_path": null,
+  "attacker_type": "lgb",
+  "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/output/test_lee_extraction/surrogate_model.txt",
+  "scaler_path": null,
+  "metrics_csv": "/home/hytong/Documents/model_extraction_malware/output/test_lee_extraction/extraction_metrics.csv",
+  "metrics": [
+    {
+      "round": 0,
+      "labels_used": 100,
+      "queries_used": -50,
+      "optimal_threshold": 0.1,
+      "surrogate_acc": 0.635,
+      "surrogate_acc_vs_oracle": 0.64,
+      "surrogate_balanced_acc": 0.6385554221688675,
+      "surrogate_auc": 0.6783713485394158,
+      "surrogate_precision": 0.7230769230769231,
+      "surrogate_recall": 0.46078431372549017,
+      "surrogate_f1": 0.562874251497006,
+      "agreement_with_target": 0.64,
+      "oracle_acc_vs_gt": 0.915
+    },
+    {
+      "round": 1,
+      "labels_used": 150,
+      "queries_used": 0,
+      "optimal_threshold": 0.1,
+      "surrogate_acc": 0.515,
+      "surrogate_acc_vs_oracle": 0.54,
+      "surrogate_balanced_acc": 0.5213085234093637,
+      "surrogate_auc": 0.6423569427771109,
+      "surrogate_precision": 0.5675675675675675,
+      "surrogate_recall": 0.20588235294117646,
+      "surrogate_f1": 0.302158273381295,
+      "agreement_with_target": 0.54,
+      "oracle_acc_vs_gt": 0.915
+    }
+  ]
+}

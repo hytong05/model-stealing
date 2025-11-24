@@ -43,19 +43,28 @@ def create_dnn(seed=42, input_shape=(2381), mc=False):
     return model
 
 
-def create_dnn2(seed=42, mc=False):
+def create_dnn2(seed=42, mc=False, input_shape=(2381,)):
     """
     This function compiles and returns a Keras model.
+    
+    Args:
+        seed: Random seed
+        mc: Monte Carlo dropout flag
+        input_shape: Shape of input features (default: (2381,) for EMBER dataset)
     """
 
     initializer = tf.keras.initializers.GlorotNormal(seed=seed)
 
     # model = tf.keras.models.Sequential()
-    input1 = tf.keras.Input(shape=(2381, ))
+    input1 = tf.keras.Input(shape=input_shape)
     input2 = tf.keras.Input(shape=(1, ))
 
     x = tf.keras.layers.concatenate([input1, input2])
-    x = tf.keras.layers.Dense(2382, activation='elu', kernel_initializer=initializer)(x)
+    # Tính toán số units dựa trên input_shape + 1 (cho y_true)
+    # input1 có shape (input_shape[0],), input2 có shape (1,), concat sẽ có shape (input_shape[0] + 1,)
+    feature_dim = input_shape[0] if isinstance(input_shape, tuple) else input_shape
+    concat_dim = feature_dim + 1  # input1 + input2 = feature_dim + 1
+    x = tf.keras.layers.Dense(concat_dim, activation='elu', kernel_initializer=initializer)(x)
     x = tf.keras.layers.LayerNormalization()(x)
     x = tf.keras.layers.Dropout(0.3)(x, training=mc)
 

@@ -1,0 +1,24 @@
+{
+  "config": {
+    "config_name": "LSE-ember-dualDNN-2000",
+    "description": "Tổng 2,000 queries (2000 queries/round × 1 round)",
+    "total_queries": 2000,
+    "actual_queries_used": 2000,
+    "query_batch": 2000,
+    "num_rounds": 1,
+    "total_labels_used": 4000,
+    "optimal_threshold": 0.1,
+    "final_accuracy": 0.4975,
+    "final_balanced_accuracy": 0.5,
+    "final_auc": 0.44838808470211755,
+    "final_precision": 0.4975,
+    "final_recall": 1.0,
+    "final_f1": 0.664440734557596,
+    "final_agreement": 1.0,
+    "output_dir": "/home/hytong/Documents/model_extraction_malware/output/LSE-ember-dualDNN-2000",
+    "metrics_csv": "/home/hytong/Documents/model_extraction_malware/output/LSE-ember-dualDNN-2000/extraction_metrics.csv",
+    "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/output/LSE-ember-dualDNN-2000/surrogate_model.h5",
+    "query_gap_reason": "on_target"
+  },
+  "description": "Tổng 2,000 queries (2000 queries/round × 1 round)"
+}

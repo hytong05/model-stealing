@@ -1,0 +1,24 @@
+{
+  "config": {
+    "config_name": "LEE-ember-LGB-2000",
+    "description": "Tổng 2,000 queries (2000 queries/round × 1 round)",
+    "total_queries": 2000,
+    "actual_queries_used": 2000,
+    "query_batch": 2000,
+    "num_rounds": 1,
+    "total_labels_used": 4000,
+    "optimal_threshold": 0.8,
+    "final_accuracy": 0.905,
+    "final_balanced_accuracy": 0.9049351233780845,
+    "final_auc": 0.9691917297932449,
+    "final_precision": 0.9149484536082474,
+    "final_recall": 0.8919597989949749,
+    "final_f1": 0.9033078880407125,
+    "final_agreement": 0.9475,
+    "output_dir": "/home/hytong/Documents/model_extraction_malware/output/LEE-ember-LGB-2000",
+    "metrics_csv": "/home/hytong/Documents/model_extraction_malware/output/LEE-ember-LGB-2000/extraction_metrics.csv",
+    "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/output/LEE-ember-LGB-2000/surrogate_model.txt",
+    "query_gap_reason": "on_target"
+  },
+  "description": "Tổng 2,000 queries (2000 queries/round × 1 round)"
+}

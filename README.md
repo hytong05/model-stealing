@@ -6,7 +6,7 @@ Repository for the paper [Stealing Malware Classifiers and antivirus at Low Fals
 
 ## Setup
 
-Xem file [SETUP.md](SETUP.md) để biết hướng dẫn chi tiết về cách setup môi trường ảo và cài đặt dependencies.
+Xem file [docs/SETUP.md](docs/SETUP.md) để biết hướng dẫn chi tiết về cách setup môi trường ảo và cài đặt dependencies.
 
 Tóm tắt nhanh:
 ```bash
@@ -21,31 +21,44 @@ source venv/bin/activate
 
 ```
 model_extraction_malware/
-├── src/                    # Source code chính
-│   ├── models/            # Model definitions (DNN, Sorel networks)
-│   ├── attackers/         # Surrogate model attackers
-│   ├── targets/           # Target model wrappers
-│   ├── datasets/          # Dataset loaders
-│   ├── utils/             # Utility functions
-│   └── sampling/          # Active learning sampling strategies
-├── scripts/               # Executable scripts
-│   ├── model_extraction.py
-│   ├── extract_final_model.py
-│   ├── evaluate_surrogate_similarity.py
-│   └── run_multiple_extractions.py
-├── data/                  # Data files
-├── output/                # Output files và results
-├── logs/                  # Log files
-├── config/                # Configuration files
-└── venv/                  # Virtual environment (tự động tạo)
+├── docs/                          # Documentation & reports
+│   ├── BUGFIX_SUMMARY.md
+│   ├── SETUP.md
+│   └── reports/                   # Generated summaries (metrics, comparisons, …)
+├── notebooks/
+│   └── targets/                   # Training notebooks (CEE.ipynb, …)
+├── artifacts/
+│   └── targets/                   # Packaged target models + normalization stats
+├── scripts/                       # Executable utilities
+│   ├── attacks/                   # Extraction / evaluation pipelines
+│   │   ├── model_extraction.py
+│   │   ├── extract_final_model.py
+│   │   ├── run_multiple_extractions.py
+│   │   └── evaluate_surrogate_similarity.py
+│   ├── oracle/                    # Black-box API server & clients
+│   ├── data/                      # Data preprocessing helpers
+│   └── examples/                  # Sample/legacy attack flows
+├── src/                           # Core library (attackers, targets, utils, …)
+├── data/                          # Vectorized datasets (EMBER/SOREL/AV)
+├── storage/                       # Training checkpoints (ignored)
+├── output/                        # Experiment outputs (ignored)
+├── logs/                          # Log files
+├── config/                        # Configuration files
+└── venv/                          # Virtual environment (tự động tạo)
 ```
+
+## Documentation
+
+- `docs/SETUP.md`: Hướng dẫn chi tiết cài đặt môi trường
+- `docs/BUGFIX_SUMMARY.md`: Nhật ký sửa lỗi và quyết định thiết kế
+- `docs/reports/`: Các báo cáo kết quả (ví dụ `metrics_explanation.md`, `extraction_comparison_report.md`)
 
 ## Usage 
 
 In order to generate a surrogate model you need to specify the target, the surrogate type, the sampling method and the dataset. Please see the details below for the allowed values for each parameter.
 
 ```bash
-python scripts/model_extraction.py -h                               
+python scripts/attacks/model_extraction.py -h                               
 usage: Model extraction using active learning techniques [-h] -d DATA_DIR [-s SEED] [-m METHOD] [-n NUM_QUERIES] [-b BUDGET]
                                                          [-e NUM_EPOCHS] [-t {DNN,dualDNN,LGB,SVM}] [-l LOG_DIR]
                                                          [-tg {ember,sorel-FCNN,sorel-LGB,AV1,AV2,AV3,AV4}]
@@ -77,6 +90,31 @@ optional arguments:
                         Thief and test dataset
   --fpr FPR             FPR level for surrogate merics.
 ```
+
+## Oracle Query Module
+
+Để đảm bảo tấn công và truy vấn target model tách biệt hoàn toàn, sử dụng module `scripts/oracle/query_labels.py`:
+
+1. **Sinh nhãn từ target model (không cần server)**
+   ```bash
+   python scripts/oracle/query_labels.py \
+     --input-path data/pool_features.npy \
+     --output-path cache/pool_labels.npy \
+     --model-type h5 \
+     --model-path artifacts/targets/CEE.h5
+   ```
+   Với LightGBM:
+   ```bash
+   python scripts/oracle/query_labels.py \
+     --input-path data/pool.parquet \
+     --output-path cache/pool_labels.npy \
+     --model-type lgb \
+     --model-path artifacts/targets/LEE.lgb \
+     --normalization-stats-path artifacts/targets/LEE_normalization_stats.npz
+   ```
+
+2. **Tích hợp với quá trình tấn công**\
+   Các scripts trong `scripts/attacks/` có thể đọc lại nhãn đã sinh hoặc import trực tiếp module để gọi `LocalOracleClient`. Điều này đảm bảo quá trình truy vấn target model hoạt động như một bước độc lập, không cần HTTP API hay server chạy nền.
 
 ## Giải Quyết Vấn Đề Không Tương Đồng Về Số Chiều Đặc Trưng
 
@@ -126,7 +164,7 @@ Giải pháp cho sự bất đồng bộ này là:
 The following command will create a LightGBM surrogate model and it will store it in the output folder (`/tmp/logs`) along with a log file with the results for each iteration.
 
 ```bash
-python scripts/model_extraction.py --data_dir /data/mari/sorel-data --dataset sorel --seed 42 --method medoids --type LGB --target_model sorel-FCNN --num_epochs 1 --num_queries 10 --log_dir "/tmp/logs/" --budget 2500 --fpr 0.006
+python scripts/attacks/model_extraction.py --data_dir /data/mari/sorel-data --dataset sorel --seed 42 --method medoids --type LGB --target_model sorel-FCNN --num_epochs 1 --num_queries 10 --log_dir "/tmp/logs/" --budget 2500 --fpr 0.006
 ```
 If you use this code please cite:
 ```

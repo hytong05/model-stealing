@@ -40,7 +40,6 @@ ENV/
 # Data files (large)
 *.parquet
 *.dat
-*.h5
 *.hdf5
 *.pkl
 *.joblib

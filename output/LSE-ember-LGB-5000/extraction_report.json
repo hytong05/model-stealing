@@ -1,0 +1,24 @@
+{
+  "config": {
+    "config_name": "LSE-ember-LGB-5000",
+    "description": "Tổng 5,000 queries (1250 queries/round × 4 rounds)",
+    "total_queries": 5000,
+    "actual_queries_used": 5000,
+    "query_batch": 1250,
+    "num_rounds": 4,
+    "total_labels_used": 7000,
+    "optimal_threshold": 0.1,
+    "final_accuracy": 0.4975,
+    "final_balanced_accuracy": 0.5,
+    "final_auc": 0.5,
+    "final_precision": 0.4975,
+    "final_recall": 1.0,
+    "final_f1": 0.664440734557596,
+    "final_agreement": 1.0,
+    "output_dir": "/home/hytong/Documents/model_extraction_malware/output/LSE-ember-LGB-5000",
+    "metrics_csv": "/home/hytong/Documents/model_extraction_malware/output/LSE-ember-LGB-5000/extraction_metrics.csv",
+    "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/output/LSE-ember-LGB-5000/surrogate_model.txt",
+    "query_gap_reason": "on_target"
+  },
+  "description": "Tổng 5,000 queries (1250 queries/round × 4 rounds)"
+}

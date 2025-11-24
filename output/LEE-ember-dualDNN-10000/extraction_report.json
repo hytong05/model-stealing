@@ -1,0 +1,24 @@
+{
+  "config": {
+    "config_name": "LEE-ember-dualDNN-10000",
+    "description": "Tổng 10,000 queries (2000 queries/round × 5 rounds)",
+    "total_queries": 10000,
+    "actual_queries_used": 10000,
+    "query_batch": 2000,
+    "num_rounds": 5,
+    "total_labels_used": 12000,
+    "optimal_threshold": 0.25,
+    "final_accuracy": 0.92275,
+    "final_balanced_accuracy": 0.9228943223580589,
+    "final_auc": 0.9591274781869547,
+    "final_precision": 0.8989084005695301,
+    "final_recall": 0.9517587939698492,
+    "final_f1": 0.9245789602147914,
+    "final_agreement": 0.99125,
+    "output_dir": "/home/hytong/Documents/model_extraction_malware/output/LEE-ember-dualDNN-10000",
+    "metrics_csv": "/home/hytong/Documents/model_extraction_malware/output/LEE-ember-dualDNN-10000/extraction_metrics.csv",
+    "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/output/LEE-ember-dualDNN-10000/surrogate_model.h5",
+    "query_gap_reason": "on_target"
+  },
+  "description": "Tổng 10,000 queries (2000 queries/round × 5 rounds)"
+}

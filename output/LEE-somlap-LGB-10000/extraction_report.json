@@ -1,0 +1,24 @@
+{
+  "config": {
+    "config_name": "LEE-somlap-LGB-10000",
+    "description": "Tổng 10,000 queries (2000 queries/round × 5 rounds)",
+    "total_queries": 10000,
+    "actual_queries_used": 10000,
+    "query_batch": 2000,
+    "num_rounds": 5,
+    "total_labels_used": 12000,
+    "optimal_threshold": 0.84,
+    "final_accuracy": 0.66975,
+    "final_balanced_accuracy": 0.7011278370694878,
+    "final_auc": 0.832906211093283,
+    "final_precision": 0.5398613518197574,
+    "final_recall": 0.827906976744186,
+    "final_f1": 0.6535536323105167,
+    "final_agreement": 0.9985,
+    "output_dir": "/home/hytong/Documents/model_extraction_malware/output/LEE-somlap-LGB-10000",
+    "metrics_csv": "/home/hytong/Documents/model_extraction_malware/output/LEE-somlap-LGB-10000/extraction_metrics.csv",
+    "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/output/LEE-somlap-LGB-10000/surrogate_model.txt",
+    "query_gap_reason": "on_target"
+  },
+  "description": "Tổng 10,000 queries (2000 queries/round × 5 rounds)"
+}

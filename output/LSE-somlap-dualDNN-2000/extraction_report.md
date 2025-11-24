@@ -1,0 +1,28 @@
+# Báo Cáo Extraction Attack: LSE-somlap-dualDNN-2000
+
+## Thông Tin Cấu Hình
+
+- **Mô tả:** Tổng 2,000 queries (2000 queries/round × 1 round)
+- **Query batch:** 2,000
+- **Số rounds:** 1
+- **Queries dự kiến:** 2,000
+- **Queries thực tế:** 2,000
+- **Ghi chú queries:** on_target
+- **Tổng labels sử dụng (bao gồm seed+val):** 4,000
+
+## Kết Quả Metrics
+
+- **Accuracy:** 0.9008 (90.08%)
+- **Balanced Accuracy:** 0.9164 (91.64%) [quan trọng với class imbalance]
+- **F1-score:** 0.8813
+- **Optimal Threshold:** 0.6300
+- **Agreement:** 0.9995 (99.95%)
+- **AUC:** 0.9436
+- **Precision:** 0.8011
+- **Recall:** 0.9794
+
+## Files
+
+- **Metrics CSV:** `/home/hytong/Documents/model_extraction_malware/output/LSE-somlap-dualDNN-2000/extraction_metrics.csv`
+- **Surrogate model:** `/home/hytong/Documents/model_extraction_malware/output/LSE-somlap-dualDNN-2000/surrogate_model.h5`
+- **Output directory:** `/home/hytong/Documents/model_extraction_malware/output/LSE-somlap-dualDNN-2000`

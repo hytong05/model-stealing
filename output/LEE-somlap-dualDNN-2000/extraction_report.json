@@ -1,0 +1,24 @@
+{
+  "config": {
+    "config_name": "LEE-somlap-dualDNN-2000",
+    "description": "Tổng 2,000 queries (2000 queries/round × 1 round)",
+    "total_queries": 2000,
+    "actual_queries_used": 2000,
+    "query_batch": 2000,
+    "num_rounds": 1,
+    "total_labels_used": 4000,
+    "optimal_threshold": 0.13,
+    "final_accuracy": 0.72125,
+    "final_balanced_accuracy": 0.7421467519757122,
+    "final_auc": 0.8054298630483558,
+    "final_precision": 0.5929456625357483,
+    "final_recall": 0.826578073089701,
+    "final_f1": 0.6905356647238412,
+    "final_agreement": 0.99875,
+    "output_dir": "/home/hytong/Documents/model_extraction_malware/output/LEE-somlap-dualDNN-2000",
+    "metrics_csv": "/home/hytong/Documents/model_extraction_malware/output/LEE-somlap-dualDNN-2000/extraction_metrics.csv",
+    "surrogate_model_path": "/home/hytong/Documents/model_extraction_malware/output/LEE-somlap-dualDNN-2000/surrogate_model.h5",
+    "query_gap_reason": "on_target"
+  },
+  "description": "Tổng 2,000 queries (2000 queries/round × 1 round)"
+}
