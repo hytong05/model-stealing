@@ -1,3 +1,0 @@
-round,labels_used,queries_used,optimal_threshold,surrogate_acc,surrogate_acc_vs_oracle,surrogate_balanced_acc,surrogate_auc,surrogate_precision,surrogate_recall,surrogate_f1,agreement_with_target,oracle_acc_vs_gt
-0,100,-50,0.1,0.635,0.64,0.6385554221688675,0.6783713485394158,0.7230769230769231,0.46078431372549017,0.562874251497006,0.64,0.915
-1,150,0,0.1,0.515,0.54,0.5213085234093637,0.6423569427771109,0.5675675675675675,0.20588235294117646,0.302158273381295,0.54,0.915

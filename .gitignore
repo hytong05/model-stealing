@@ -44,8 +44,18 @@ ENV/
 *.pkl
 *.joblib
 *.model
+*.csv
 
-# Logs and outputs
+# Model files (large)
+*.h5
+*.lgb
+*.npz
+
+# Experiment outputs (should not be tracked)
+output/
+storage/
+
+# Logs
 logs/
 *.log
 
@@ -59,3 +69,17 @@ mlruns/
 # Temporary files
 /tmp/
 *.tmp
+
+# Artifacts - ignore model files but keep structure
+# Note: Keep small files like README.md, configs, but ignore large model files
+artifacts/targets/*.h5
+artifacts/targets/*.lgb
+artifacts/targets/*.npz
+artifacts/targets/*.pkl
+
+# Data directory - ignore large data files
+# Keep README and scripts, but ignore actual data
+data/**/*.csv
+data/**/*.parquet
+data/**/*.dat
+data/**/*.h5
