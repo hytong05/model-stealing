@@ -7,8 +7,10 @@ scikit-learn-extra>=0.2.0
 
 # Machine Learning frameworks
 lightgbm>=3.3.0
+xgboost>=3.0.0
 tensorflow>=2.8.0
 torch>=1.11.0
+pytorch-tabnet>=4.0.0
 
 # Data processing
 pyarrow>=6.0.0

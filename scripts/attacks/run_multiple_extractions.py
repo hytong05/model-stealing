@@ -43,6 +43,14 @@ MODEL_DATASET_COMPATIBILITY = {
     "CSE": ["ember"],
     "LEE": ["ember"],
     "LSE": ["ember"],
+    "CNN": ["ember"],
+    "KNN": ["ember"],
+    "XGBOOST": ["ember"],
+    "XGBOOST-EMBER": ["ember"],
+    "DUALFFNN": ["ember"],
+    "DUALFFNN-EMBER": ["ember"],
+    "TABNET": ["ember"],
+    "TABNET-EMBER": ["ember"],
     # Add new models here: "LEE_SOMLAP": ["somlap"],
 }
 
@@ -165,15 +173,15 @@ def _create_individual_report(output_dir: Path, result: dict, config: dict):
 def main():
     parser = argparse.ArgumentParser(description="Chạy model extraction với nhiều cấu hình")
     parser.add_argument("--model_name", type=str, default=None,
-                       help="Tên model (CEE, LEE, CSE, LSE). Ưu tiên hơn --model_path. Sẽ tự động detect type và tìm normalization stats.")
+                       help="Tên model (CEE, LEE, CSE, LSE, CNN, KNN, XGBOOST, DUALFFNN, TABNET). Ưu tiên hơn --model_path. Sẽ tự động detect type và tìm normalization stats.")
     parser.add_argument("--model_path", type=str, default=None,
-                       help="Đường dẫn tới file model (.h5 hoặc .lgb). Chỉ dùng nếu không có --model_name")
-    parser.add_argument("--model_type", type=str, choices=["h5", "lgb"], default=None,
-                       help="Loại model: 'h5' (Keras) hoặc 'lgb' (LightGBM). Chỉ cần nếu dùng --model_path")
+                       help="Đường dẫn tới file model (.h5, .lgb, .json, .pt, hoặc .zip). Chỉ dùng nếu không có --model_name")
+    parser.add_argument("--model_type", type=str, choices=["h5", "lgb", "xgboost", "pytorch", "tabnet"], default=None,
+                       help="Loại model: 'h5' (Keras), 'lgb' (LightGBM), 'xgboost' (XGBoost), 'pytorch' (PyTorch/dualFFNN), hoặc 'tabnet' (TabNet). Chỉ cần nếu dùng --model_path")
     parser.add_argument("--normalization_stats_path", type=str, default=None,
-                       help="Đường dẫn tới file normalization_stats.npz. Chỉ cần nếu dùng --model_path với model_type='lgb'")
-    parser.add_argument("--attacker_type", type=str, choices=["keras", "lgb", "dual"], required=True,
-                       help="Loại surrogate model: 'keras' (DNN), 'lgb' (LightGBM), hoặc 'dual' (dualDNN). BẮT BUỘC phải chỉ định.")
+                       help="Đường dẫn tới file normalization_stats.npz. Cần cho model_type='lgb', 'xgboost', 'pytorch', hoặc 'tabnet'")
+    parser.add_argument("--attacker_type", type=str, choices=["keras", "lgb", "dual", "cnn", "knn", "xgb", "tabnet"], required=True,
+                       help="Loại surrogate model: 'keras' (DNN), 'lgb' (LightGBM), 'dual' (dualDNN), 'cnn' (CNN), 'knn' (KNN), 'xgb' (XGBoost), hoặc 'tabnet' (TabNet). BẮT BUỘC phải chỉ định.")
     parser.add_argument("--dataset", type=str, choices=["ember", "somlap"], default="ember",
                        help="Dataset để tấn công: 'ember' (mặc định) hoặc 'somlap'")
     parser.add_argument("--threshold_optimization_metric", type=str, choices=["f1", "accuracy", "balanced_accuracy"], default="f1",
@@ -217,6 +225,11 @@ def main():
             PROJECT_ROOT / "artifacts" / "targets" / "CSE.h5",
             PROJECT_ROOT / "artifacts" / "targets" / "LEE.lgb",
             PROJECT_ROOT / "artifacts" / "targets" / "LSE.lgb",
+            PROJECT_ROOT / "artifacts" / "targets" / "CNN.h5",
+            PROJECT_ROOT / "artifacts" / "targets" / "KNN.pkl",
+            PROJECT_ROOT / "artifacts" / "targets" / "xgboost_ember.json",
+            PROJECT_ROOT / "artifacts" / "targets" / "dualffnn_ember_full.pt",
+            PROJECT_ROOT / "artifacts" / "targets" / "tabnet_ember.zip",
             PROJECT_ROOT / "artifacts" / "targets" / "final_model.h5",
             PROJECT_ROOT / "artifacts" / "targets" / "final_model.lgb",
         ]
@@ -249,10 +262,29 @@ def main():
         # Xử lý model_path (cách cũ)
         if args.model_type is None:
             model_path_obj = Path(weights_path)
-            if model_path_obj.suffix.lower() in ['.lgb', '.txt', '.pkl', '.d5']:
+            suffix_lower = model_path_obj.suffix.lower()
+            
+            if suffix_lower in ['.lgb', '.txt', '.d5']:
                 args.model_type = "lgb"
                 print(f"✅ Tự động phát hiện model type: LGB (từ extension {model_path_obj.suffix})")
-            elif model_path_obj.suffix.lower() in ['.h5', '.hdf5']:
+            elif suffix_lower == '.json':
+                # XGBoost model
+                args.model_type = "xgboost"
+                print(f"✅ Tự động phát hiện model type: XGBoost (từ extension {model_path_obj.suffix})")
+            elif suffix_lower == '.pt':
+                # PyTorch model (dualFFNN)
+                args.model_type = "pytorch"
+                print(f"✅ Tự động phát hiện model type: PyTorch (từ extension {model_path_obj.suffix})")
+            elif suffix_lower == '.zip':
+                # TabNet model
+                args.model_type = "tabnet"
+                print(f"✅ Tự động phát hiện model type: TabNet (từ extension {model_path_obj.suffix})")
+            elif suffix_lower == '.pkl':
+                # .pkl có thể là LightGBM hoặc sklearn - sẽ được auto-detect trong create_oracle_from_name
+                # Tạm thời để None để auto-detect
+                args.model_type = None
+                print(f"✅ File .pkl - sẽ tự động detect model type (LightGBM hoặc sklearn) trong create_oracle_from_name")
+            elif suffix_lower in ['.h5', '.hdf5']:
                 args.model_type = "h5"
                 print(f"✅ Tự động phát hiện model type: H5 (từ extension {model_path_obj.suffix})")
             else:
@@ -292,8 +324,14 @@ def main():
     }
     
     normalization_stats_path = None
-    if model_name is None and args.model_type == "lgb" and args.normalization_stats_path is None:
+    # Các model types cần normalization stats: lgb, sklearn, xgboost, pytorch (dualFFNN), tabnet
+    needs_normalization = args.model_type in ["lgb", "sklearn", "xgboost", "pytorch", "tabnet"]
+    if model_name is None and needs_normalization and args.normalization_stats_path is None:
         model_name_without_ext = model_path_obj.stem
+        # Xử lý special cases: dualffnn_ember_full.pt -> dualffnn_ember
+        if model_name_without_ext.endswith("_full"):
+            model_name_without_ext = model_name_without_ext[:-5]  # Remove "_full"
+        
         possible_stats_paths = [
             model_path_obj.parent / f"{model_name_without_ext}.npz",
             model_path_obj.parent / f"{model_name_without_ext}_normalization_stats.npz",
@@ -399,7 +437,11 @@ def main():
     attacker_name_map = {
         "keras": "DNN",
         "lgb": "LGB",
-        "dual": "dualDNN"
+        "dual": "dualDNN",
+        "cnn": "CNN",
+        "knn": "KNN",
+        "xgb": "XGB",
+        "tabnet": "TabNet"
     }
     attacker_name_display = attacker_name_map.get(args.attacker_type.lower(), args.attacker_type.upper())
     
@@ -412,8 +454,9 @@ def main():
         return f"{target_model}-{dataset}-{attacker}-{total_queries}"
     
     # Các cấu hình khác nhau
-    # Lưu ý: total_queries = query_batch × num_rounds (chỉ tính số queries trong active learning rounds)
-    # Labels sử dụng = seed_size + val_size + total_queries
+    # Lưu ý: total_budget = seed_size (10%) + val_size (20%) + AL_queries (70%)
+    # AL_queries = query_batch × num_rounds (chỉ tính số queries trong active learning rounds)
+    # Labels sử dụng = seed_size + val_size + AL_queries = total_budget
     # TEST MODE: Sử dụng config nhỏ để test nhanh
     test_mode = os.environ.get("EXTRACTION_TEST_MODE", "false").lower() == "true"
     
@@ -423,44 +466,36 @@ def main():
         configurations = [
             {
                 "name": config_name,
-                "query_batch": 50,
-                "num_rounds": 2,
-                "total_queries": total_queries,  # 50 × 2 = 100
-                "description": "TEST: Tổng 100 queries (50 queries/round × 2 rounds)"
+                "total_budget": total_queries,  # 100 queries total (seed + val + AL)
+                "description": "TEST: Tổng 100 queries (seed + val + AL queries)"
             }
         ]
     else:
-        # Config 1: 10000 queries
-        total_queries_1 = 10000
+        # Config 1: 200 queries
+        total_queries_1 = 200
         config_name_1 = create_output_folder_name(target_model_name, dataset_name, attacker_name_display, total_queries_1)
-        # Config 2: 5000 queries
-        total_queries_2 = 5000
+        # Config 2: 1000 queries
+        total_queries_2 = 1000
         config_name_2 = create_output_folder_name(target_model_name, dataset_name, attacker_name_display, total_queries_2)
-        # Config 3: 2000 queries
-        total_queries_3 = 2000
+        # Config 3: 5000 queries
+        total_queries_3 = 5000
         config_name_3 = create_output_folder_name(target_model_name, dataset_name, attacker_name_display, total_queries_3)
         
         configurations = [
             {
                 "name": config_name_1,
-                "query_batch": 2000,
-                "num_rounds": 5,
-                "total_queries": total_queries_1,  # 2000 × 5 = 10000
-                "description": "Tổng 10,000 queries (2000 queries/round × 5 rounds)"
+                "total_budget": total_queries_1,  # 200 queries total (seed + val + AL)
+                "description": "Tổng 200 queries (seed + val + AL queries)"
             },
             {
                 "name": config_name_2,
-                "query_batch": 1250,
-                "num_rounds": 4,
-                "total_queries": total_queries_2,  # 1250 × 4 = 5000
-                "description": "Tổng 5,000 queries (1250 queries/round × 4 rounds)"
+                "total_budget": total_queries_2,  # 1000 queries total (seed + val + AL)
+                "description": "Tổng 1,000 queries (seed + val + AL queries)"
             },
             {
                 "name": config_name_3,
-                "query_batch": 2000,
-                "num_rounds": 1,
-                "total_queries": total_queries_3,  # 2000 × 1 = 2000
-                "description": "Tổng 2,000 queries (2000 queries/round × 1 round)"
+                "total_budget": total_queries_3,  # 5000 queries total (seed + val + AL)
+                "description": "Tổng 5,000 queries (seed + val + AL queries)"
             }
         ]
     
@@ -554,11 +589,8 @@ def main():
                 test_parquet=test_parquet,
                 dataset=args.dataset,  # Dataset để tấn công: "ember" hoặc "somlap"
                 seed=42,
-                seed_size=2000,
-                val_size=1000,
                 eval_size=4000,
-                query_batch=config["query_batch"],
-                num_rounds=config["num_rounds"],
+                total_budget=config["total_budget"],  # Tổng query budget (seed + val + AL queries)
                 num_epochs=100,  # Theo nghiên cứu: 100 epochs với early_stopping=30 (chỉ dùng cho Keras)
                 model_type=args.model_type,
                 normalization_stats_path=normalization_stats_path,  # Đảm bảo là absolute path
@@ -590,10 +622,37 @@ def main():
                     )
             else:
                 # Với model_name, chỉ cần verify tên model khớp
-                expected_model_name = f"{model_name}.lgb" if "lgb" in summary_model_name.lower() else f"{model_name}.h5"
-                if summary_model_name != expected_model_name:
+                # Xác định extension dựa trên model_name hoặc summary_model_name
+                model_name_upper = model_name.upper()
+                summary_name_lower = summary_model_name.lower()
+                
+                # Map model names to expected extensions
+                expected_extensions = {
+                    "XGBOOST": ".json",
+                    "DUALFFNN": ".pt",
+                    "TABNET": ".zip",
+                }
+                
+                # Tìm extension từ summary hoặc dùng default
+                if any(ext in summary_name_lower for ext in [".lgb", ".txt", ".d5"]):
+                    expected_ext = ".lgb"
+                elif ".json" in summary_name_lower:
+                    expected_ext = ".json"
+                elif ".pt" in summary_name_lower:
+                    expected_ext = ".pt"
+                elif ".zip" in summary_name_lower:
+                    expected_ext = ".zip"
+                elif ".h5" in summary_name_lower or ".hdf5" in summary_name_lower:
+                    expected_ext = ".h5"
+                elif model_name_upper in expected_extensions:
+                    expected_ext = expected_extensions[model_name_upper]
+                else:
+                    expected_ext = ".h5"  # Default
+                
+                expected_model_name = f"{model_name}{expected_ext}".lower()
+                if summary_model_name.lower() != expected_model_name:
                     print(f"\n⚠️  CẢNH BÁO: Summary model name ({summary_model_name}) != Expected model name ({expected_model_name})")
-                    print(f"   Tuy nhiên sẽ tiếp tục vì có thể do extension khác nhau.")
+                    print(f"   Tuy nhiên sẽ tiếp tục vì có thể do extension khác nhau hoặc naming convention.")
                 if not summary_model_name.upper().startswith(model_name.upper()):
                     print(f"\n⚠️  CẢNH BÁO: Summary model name ({summary_model_name}) không bắt đầu với model name ({model_name})")
                     print(f"   Tuy nhiên sẽ tiếp tục vì có thể do naming convention.")
@@ -604,15 +663,35 @@ def main():
             final_metrics = summary["metrics"][-1] if summary["metrics"] else {}
             
             # Lấy số queries thực tế từ metrics (không tính seed và val)
-            actual_queries_used = final_metrics.get("queries_used", config["total_queries"])
+            # queries_used trong metrics chỉ tính AL queries, không tính seed và val
+            # Nếu không có trong metrics, tính từ summary hoặc config
+            if "queries_used" in final_metrics:
+                actual_queries_used = final_metrics["queries_used"]
+            else:
+                # Fallback: Tính AL queries từ summary hoặc config
+                query_batch_from_summary = summary.get("query_batch", 0)
+                num_rounds_from_summary = summary.get("num_rounds", 0)
+                if query_batch_from_summary > 0 and num_rounds_from_summary > 0:
+                    actual_queries_used = query_batch_from_summary * num_rounds_from_summary
+                else:
+                    # Tính từ total_budget: AL_queries = total_budget - seed - val
+                    seed_size_from_summary = summary.get("seed_size", 0)
+                    val_size_from_summary = summary.get("val_size", 0)
+                    if seed_size_from_summary > 0 and val_size_from_summary > 0:
+                        actual_queries_used = config["total_budget"] - seed_size_from_summary - val_size_from_summary
+                    else:
+                        # Fallback cuối cùng: dùng total_budget (sai nhưng tốt hơn là crash)
+                        actual_queries_used = config["total_budget"]
             
             result = {
                 "config_name": config["name"],
                 "description": config["description"],
-                "total_queries": config["total_queries"],  # Số queries dự kiến
+                "total_queries": config["total_budget"],  # Total query budget (seed + val + AL)
                 "actual_queries_used": summary.get("total_queries_actual", actual_queries_used),
-                "query_batch": config["query_batch"],
-                "num_rounds": config["num_rounds"],
+                "query_batch": summary.get("query_batch", 0),  # Lấy từ summary
+                "num_rounds": summary.get("num_rounds", 0),  # Lấy từ summary
+                "seed_size": summary.get("seed_size", 0),
+                "val_size": summary.get("val_size", 0),
                 "total_labels_used": final_metrics.get("labels_used", 0),
                 "optimal_threshold": final_metrics.get("optimal_threshold", 0.5),
                 "final_accuracy": final_metrics.get("surrogate_acc", 0.0),
@@ -627,6 +706,35 @@ def main():
                 "surrogate_model_path": summary.get("surrogate_model_path", ""),
                 "query_gap_reason": summary.get("query_gap_reason"),
             }
+
+            #region agent log
+            try:
+                import json as _json, time as _time
+                _log_payload = {
+                    "sessionId": "debug-session",
+                    "runId": "pre-fix",
+                    "hypothesisId": "H1",
+                    "location": "run_multiple_extractions.py:result_build",
+                    "message": "summary to result mapping",
+                    "data": {
+                        "config": config["name"],
+                        "summary_last_metrics": summary.get("metrics", [])[-1] if summary.get("metrics") else None,
+                        "final_accuracy": result["final_accuracy"],
+                        "final_agreement": result["final_agreement"],
+                        "optimal_threshold": result["optimal_threshold"],
+                        "metrics_csv": result["metrics_csv"],
+                        "surrogate_model_path": result["surrogate_model_path"],
+                        "total_queries_actual": summary.get("total_queries_actual"),
+                        "query_batch": summary.get("query_batch"),
+                        "num_rounds": summary.get("num_rounds"),
+                    },
+                    "timestamp": int(_time.time() * 1000),
+                }
+                with open("/home/hytong/Documents/model_extraction_malware/.cursor/debug.log", "a", encoding="utf-8") as _f:
+                    _f.write(_json.dumps(_log_payload, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            #endregion
             
             results.append(result)
             
@@ -657,6 +765,38 @@ def main():
     print("📊 TẠO REPORT")
     print(f"{'='*80}\n")
     
+    #region agent log
+    try:
+        import json as _json, time as _time
+        _log_payload = {
+            "sessionId": "debug-session",
+            "runId": "pre-fix",
+            "hypothesisId": "H3",
+            "location": "run_multiple_extractions.py:before_report",
+            "message": "results collected before report",
+            "data": {
+                "results_count": len(results),
+                "configs": [r.get("config_name") for r in results],
+                "final_metrics_list": [
+                    {
+                        "config": r.get("config_name"),
+                        "final_accuracy": r.get("final_accuracy"),
+                        "final_agreement": r.get("final_agreement"),
+                        "optimal_threshold": r.get("optimal_threshold"),
+                        "metrics_csv": r.get("metrics_csv"),
+                    }
+                    for r in results
+                    if "error" not in r
+                ],
+            },
+            "timestamp": int(_time.time() * 1000),
+        }
+        with open("/home/hytong/Documents/model_extraction_malware/.cursor/debug.log", "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_log_payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    #endregion
+
     report_path = base_output_dir / "extraction_comparison_report.txt"
     report_md_path = base_output_dir / "extraction_comparison_report.md"
     

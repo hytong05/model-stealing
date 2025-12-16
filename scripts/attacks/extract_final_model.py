@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.attackers import KerasAttacker, LGBAttacker, KerasDualAttacker
+from src.attackers import KerasAttacker, LGBAttacker, KerasDualAttacker, CNNAttacker, KNNAttacker, XGBoostAttacker, TabNetAttacker
 from src.targets.oracle_client import LocalOracleClient, create_oracle_from_name
 from src.sampling import entropy_sampling
 from sklearn_extra.cluster import KMedoids
@@ -24,6 +24,40 @@ def _clip_scale(scaler: RobustScaler, X: np.ndarray) -> np.ndarray:
     """Scale data với RobustScaler và clip về [-5, 5] giống pipeline gốc."""
     transformed = scaler.transform(X)
     return np.clip(transformed, -5, 5)
+
+
+def _pad_or_truncate_features(X: np.ndarray, target_dim: int) -> np.ndarray:
+    """
+    Pad hoặc truncate features để khớp với target_dim.
+    
+    Args:
+        X: Input features array (n_samples, n_features) hoặc (n_features,) cho single sample
+        target_dim: Số features mong muốn
+    
+    Returns:
+        X được pad/truncate để khớp với target_dim
+    """
+    # Xử lý cả 1D và 2D arrays
+    is_1d = len(X.shape) == 1
+    if is_1d:
+        X = X.reshape(1, -1)
+    
+    current_dim = X.shape[1]
+    
+    if current_dim == target_dim:
+        # Không cần thay đổi
+        return X[0] if is_1d else X
+    elif current_dim > target_dim:
+        # Truncate: Cắt bỏ features thừa (giữ N features đầu tiên)
+        X_truncated = X[:, :target_dim]
+        return X_truncated[0] if is_1d else X_truncated
+    else:
+        # Padding: Thêm zeros vào cuối
+        n_samples = X.shape[0]
+        n_pad = target_dim - current_dim
+        pad_values = np.zeros((n_samples, n_pad), dtype=X.dtype)
+        X_padded = np.hstack([X, pad_values])
+        return X_padded[0] if is_1d else X_padded
 
 
 def _resolve_optional_path(path_str: str | None) -> Path | None:
@@ -256,11 +290,12 @@ def run_extraction(
     dataset: str = "ember",  # "ember" hoặc "somlap" - dataset để tấn công
     seed: int = 42,
     feature_dim: int = 2381,
-    seed_size: int = 2000,
-    val_size: int = 2000,
+    seed_size: int = None,  # Tự động tính từ total_budget nếu None
+    val_size: int = None,    # Tự động tính từ total_budget nếu None
     eval_size: int = 4000,
-    query_batch: int = 2000,
-    num_rounds: int = 5,
+    query_batch: int = None,  # Tự động tính từ total_budget nếu None
+    num_rounds: int = None,  # Tự động tính từ total_budget nếu None
+    total_budget: int = None,  # Tổng query budget (seed + val + AL queries). Nếu được chỉ định, sẽ tự động tính seed_size, val_size, query_batch, num_rounds
     num_epochs: int = 5,
     model_type: str = "h5",  # "h5" hoặc "lgb" - chỉ cần nếu dùng weights_path
     normalization_stats_path: str = None,  # Chỉ cần nếu dùng weights_path với model_type="lgb"
@@ -294,6 +329,59 @@ def run_extraction(
     # Auto-detect attacker_type nếu không được chỉ định
     if attacker_type is None:
         attacker_type = "keras" if model_type == "h5" else "lgb"
+
+    # QUAN TRỌNG: Tính toán seed_size, val_size, query_batch, num_rounds từ total_budget
+    # Nếu total_budget được chỉ định, tự động tính các giá trị này
+    if total_budget is not None:
+        # Tính seed_size = 10% của total_budget
+        calculated_seed_size = int(total_budget * 0.1)
+        # Tính val_size = 20% của total_budget
+        calculated_val_size = int(total_budget * 0.2)
+        # Tính AL_queries = 70% của total_budget (phần còn lại)
+        AL_queries = total_budget - calculated_seed_size - calculated_val_size
+        
+        # Sử dụng giá trị đã tính nếu không được chỉ định
+        if seed_size is None:
+            seed_size = calculated_seed_size
+        if val_size is None:
+            val_size = calculated_val_size
+        
+        # Tính query_batch và num_rounds từ AL_queries nếu chưa được chỉ định
+        if query_batch is None or num_rounds is None:
+            # Mặc định: chia AL_queries thành 5 rounds
+            if num_rounds is None:
+                num_rounds = 5
+            if query_batch is None:
+                query_batch = AL_queries // num_rounds
+                # Đảm bảo query_batch × num_rounds = AL_queries (có thể làm tròn)
+                if query_batch * num_rounds < AL_queries:
+                    query_batch += 1
+        
+        print(f"\n📊 Query Budget Configuration (từ total_budget={total_budget:,}):")
+        print(f"   Seed size: {seed_size:,} (10% của budget)")
+        print(f"   Val size: {val_size:,} (20% của budget)")
+        print(f"   AL queries: {AL_queries:,} (70% của budget)")
+        print(f"   Query batch: {query_batch:,} queries/round")
+        print(f"   Number of rounds: {num_rounds}")
+        print(f"   Total queries (seed + val + AL): {seed_size + val_size + AL_queries:,}")
+    else:
+        # Nếu total_budget không được chỉ định, dùng giá trị mặc định
+        if seed_size is None:
+            seed_size = 2000
+        if val_size is None:
+            val_size = 1000
+        if query_batch is None:
+            query_batch = 2000
+        if num_rounds is None:
+            num_rounds = 5
+        
+        print(f"\n📊 Query Budget Configuration (giá trị mặc định):")
+        print(f"   Seed size: {seed_size:,}")
+        print(f"   Val size: {val_size:,}")
+        print(f"   Query batch: {query_batch:,} queries/round")
+        print(f"   Number of rounds: {num_rounds}")
+        print(f"   AL queries: {query_batch * num_rounds:,}")
+        print(f"   Total queries (seed + val + AL): {seed_size + val_size + query_batch * num_rounds:,}")
 
     # Debug: Log giá trị train_parquet và test_parquet trước khi xử lý
     print(f"\n🔍 DEBUG: dataset={dataset}, train_parquet={train_parquet}, test_parquet={test_parquet}")
@@ -373,7 +461,7 @@ def run_extraction(
     print(f"Train file: {train_parquet if train_parquet else '(sẽ tự động chọn dựa trên dataset)'}")
     print(f"Test file: {test_parquet if test_parquet else '(sẽ tự động chọn dựa trên dataset)'}")
 
-    # Lấy feature columns và xác định feature_dim thực tế
+    # Lấy feature columns và xác định feature_dim thực tế của dataset attack
     # Nếu train_parquet là None (dùng stratified load từ 2 file - chỉ EMBER), dùng một trong 2 file hoặc test_parquet
     if train_parquet is None:
         # Chỉ có thể None với EMBER dataset (stratified loading)
@@ -387,15 +475,14 @@ def run_extraction(
     else:
         feature_cols = get_feature_columns(train_parquet, label_col)
     
-    # Tự động detect feature_dim từ dataset nếu không được chỉ định hoặc không khớp
-    actual_feature_dim = len(feature_cols)
-    print(f"Feature columns: {actual_feature_dim}")
-    if feature_dim != actual_feature_dim:
-        print(f"⚠️  Feature dimension mismatch:")
-        print(f"   - Specified feature_dim: {feature_dim}")
-        print(f"   - Actual feature_dim from {dataset.upper()} dataset: {actual_feature_dim}")
-        print(f"   ✅ Tự động sử dụng actual feature_dim: {actual_feature_dim}")
-        feature_dim = actual_feature_dim
+    # Lưu số features thực tế của dataset attack (để pad/truncate sau)
+    dataset_attack_feature_dim = len(feature_cols)
+    print(f"📊 Dataset attack ({dataset.upper()}) có {dataset_attack_feature_dim} features")
+    
+    # QUAN TRỌNG: KHÔNG tự động thay đổi feature_dim thành số features của dataset attack!
+    # feature_dim phải được set dựa trên target model, không phải dataset attack
+    # Dataset attack chỉ là nguồn dữ liệu, cần pad/truncate để khớp với target model
+    print(f"📊 Specified feature_dim (từ target model hoặc default): {feature_dim}")
     
     # QUAN TRỌNG: Validate và log thông tin target model
     oracle_source = None
@@ -492,30 +579,40 @@ def run_extraction(
         required_feature_dim = oracle_client.get_required_feature_dim()
     required_feature_dim = oracle_client.get_required_feature_dim()
     
+    # QUAN TRỌNG: Surrogate model phải có số features bằng với target model
+    # Nếu required_feature_dim không None, dùng nó cho surrogate model
+    # Nếu None (có preprocessing layer), dùng feature_dim hiện tại
     if required_feature_dim is None:
+        # Target model có preprocessing layer - sẽ tự động map
+        surrogate_feature_dim = feature_dim
         print(f"   ✅ Target model có preprocessing layer - sẽ tự động map từ {feature_dim} đặc trưng")
+        print(f"   ✅ Surrogate model sẽ dùng {surrogate_feature_dim} features (từ feature_dim)")
     else:
+        # Target model yêu cầu số features cụ thể
+        surrogate_feature_dim = required_feature_dim
         print(f"   ✅ Target model yêu cầu {required_feature_dim} đặc trưng")
-        if feature_dim > required_feature_dim:
-            print(f"   ⚠️  Dataset có {feature_dim} đặc trưng, sẽ tự động cắt bỏ {feature_dim - required_feature_dim} đặc trưng thừa")
+        print(f"   ✅ Surrogate model sẽ dùng {surrogate_feature_dim} features (từ target model)")
+        
+        # So sánh với dataset attack
+        if dataset_attack_feature_dim > required_feature_dim:
+            print(f"   ⚠️  Dataset attack có {dataset_attack_feature_dim} đặc trưng, sẽ tự động cắt bỏ {dataset_attack_feature_dim - required_feature_dim} đặc trưng thừa")
             print(f"      (Giữ {required_feature_dim} features đầu tiên)")
-        elif feature_dim < required_feature_dim:
-            print(f"   ⚠️  Dataset có {feature_dim} đặc trưng, nhưng target model yêu cầu {required_feature_dim} đặc trưng")
-            print(f"   ✅ Sẽ tự động PADDING thêm {required_feature_dim - feature_dim} đặc trưng (zeros) trước khi query oracle")
+        elif dataset_attack_feature_dim < required_feature_dim:
+            print(f"   ⚠️  Dataset attack có {dataset_attack_feature_dim} đặc trưng, nhưng target model yêu cầu {required_feature_dim} đặc trưng")
+            print(f"   ✅ Sẽ tự động PADDING thêm {required_feature_dim - dataset_attack_feature_dim} đặc trưng (zeros) trước khi query oracle và train surrogate")
             print(f"      Lưu ý: Padding có thể ảnh hưởng đến độ chính xác của attack")
+        else:
+            print(f"   ✅ Dataset attack có {dataset_attack_feature_dim} features, khớp với target model ({required_feature_dim})")
 
-    # QUAN TRỌNG: Đảm bảo seed/val sets giống nhau giữa các configs
-    # Giải pháp: Load đủ lớn (seed_val + pool lớn nhất), shuffle với seed, sau đó chia
-    # Tính pool lớn nhất cần thiết trong các configs (để đảm bảo không thiếu dữ liệu)
-    # Với cấu hình hiện tại: max_queries_10000 có query_batch=2000, num_rounds=5 => pool cần 10000
-    # QUAN TRỌNG: Thêm buffer 20% để đảm bảo KHÔNG BAO GIỜ thiếu queries
-    # Tăng buffer từ 10% lên 20% để đảm bảo đủ pool cho class balancing
-    max_pool_needed_base = query_batch * num_rounds
-    max_pool_needed = int(max_pool_needed_base * 1.2)  # Buffer 20%
+    # QUAN TRỌNG: Load đủ thief dataset để có thể chọn mẫu sau này
+    # Pool KHÔNG được chọn trước, mà tích lũy dần từ seed
+    # Cần load: seed + val + AL_queries + buffer (để đảm bảo đủ mẫu)
+    AL_queries_needed = query_batch * num_rounds
+    buffer_size = int(AL_queries_needed * 0.2)  # Buffer 20% để đảm bảo đủ mẫu
     seed_val_size = seed_size + val_size
-    total_needed = seed_val_size + max_pool_needed
+    total_needed = seed_val_size + AL_queries_needed + buffer_size
     
-    print(f"\n🔄 Đang load train data ({total_needed:,} samples: {seed_val_size:,} seed+val + {max_pool_needed:,} pool)...")
+    print(f"\n🔄 Đang load thief dataset ({total_needed:,} samples: {seed_size:,} seed + {val_size:,} val + {AL_queries_needed:,} AL queries + {buffer_size:,} buffer)...")
     
     # Load train data - xử lý khác nhau cho EMBER và SOMLAP
     if dataset == "ember":
@@ -552,6 +649,12 @@ def run_extraction(
 
     train_dist = dict(zip(*np.unique(y_train_all_gt, return_counts=True)))
     print(f"   📊 Train data distribution (ground truth): {train_dist}")
+    
+    # QUAN TRỌNG: Pad/truncate data từ dataset attack để khớp với surrogate_feature_dim
+    if dataset_attack_feature_dim != surrogate_feature_dim:
+        print(f"\n🔄 Đang pad/truncate train data từ {dataset_attack_feature_dim} lên {surrogate_feature_dim} features...")
+        X_train_all = _pad_or_truncate_features(X_train_all, surrogate_feature_dim)
+        print(f"   ✅ Train data shape sau pad/truncate: {X_train_all.shape}")
 
     # CẢI TIẾN: Stratified split cho Seed và Val để cân bằng class
     # Sử dụng ground truth labels từ train data (KHÔNG query oracle!)
@@ -600,49 +703,34 @@ def run_extraction(
     X_seed = X_train_all[seed_indices]
     X_val = X_train_all[val_indices]
     
-    # Phần còn lại làm pool
+    # QUAN TRỌNG: Phần còn lại giữ làm unlabeled pool (KHÔNG query trước)
+    # Pool sẽ tích lũy dần từ seed, sau đó thêm các mẫu được AL chọn
     used_indices = np.concatenate([seed_indices, val_indices])
-    pool_indices_all = np.setdiff1d(np.arange(len(X_train_all)), used_indices)
-
-    # QUAN TRỌNG: Pool size phải đủ cho total queries + dư 20% để đảm bảo KHÔNG BAO GIỜ thiếu
-    # Do class balancing có thể thêm queries, và cần buffer lớn để đảm bảo đủ queries
-    pool_needed_base = query_batch * num_rounds
-    pool_needed = int(pool_needed_base * 1.2)  # Dư 20% để đảm bảo đủ queries (tăng từ 10% lên 20%)
+    unlabeled_pool_indices = np.setdiff1d(np.arange(len(X_train_all)), used_indices)
+    X_unlabeled_pool = X_train_all[unlabeled_pool_indices]
+    y_unlabeled_pool_gt = y_train_all_gt[unlabeled_pool_indices]  # Ground truth labels để pre-filtering
     
-    # Kiểm tra xem có đủ data không
-    available_pool = len(pool_indices_all)
-    if available_pool < pool_needed:
-        # Nếu không đủ data cho pool với buffer, vẫn cố gắng lấy ít nhất pool_needed_base
-        if available_pool < pool_needed_base:
-            print(f"   ❌ LỖI NGHIÊM TRỌNG: Không đủ data cho pool!")
-            print(f"   ❌ Available: {available_pool:,}, Required: {pool_needed_base:,}")
-            print(f"   ❌ Pool sẽ cạn kiệt và queries sẽ thiếu!")
+    # Kiểm tra xem có đủ unlabeled pool không
+    AL_queries_needed = query_batch * num_rounds
+    available_unlabeled = len(unlabeled_pool_indices)
+    if available_unlabeled < AL_queries_needed:
+        print(f"   ⚠️  CẢNH BÁO: Unlabeled pool ({available_unlabeled:,}) < AL queries cần ({AL_queries_needed:,})")
+        print(f"   💡 Có thể sẽ thiếu queries trong quá trình active learning")
+        if available_unlabeled < AL_queries_needed * 0.9:
             raise ValueError(
-                f"Không đủ data cho pool! Available: {available_pool:,}, "
-                f"Required: {pool_needed_base:,} (query_batch={query_batch:,} × num_rounds={num_rounds})"
+                f"Không đủ unlabeled pool! Available: {available_unlabeled:,}, "
+                f"Required: {AL_queries_needed:,} (query_batch={query_batch:,} × num_rounds={num_rounds})"
             )
-        else:
-            print(f"   ⚠️  CẢNH BÁO: Không đủ data cho pool với buffer ({available_pool:,} < {pool_needed:,})")
-            print(f"   💡 Sẽ dùng tối đa {available_pool:,} samples cho pool (thiếu buffer)")
-            pool_needed = available_pool
-    
-    # Lấy pool từ indices
-    pool_indices = pool_indices_all[:pool_needed]
-    X_pool = X_train_all[pool_indices]
-    # QUAN TRỌNG: Lưu labels của pool từ thief dataset để pre-filtering
-    y_pool_gt = y_train_all_gt[pool_indices]  # Ground truth labels của pool từ thief dataset
-    buffer_size = pool_needed - pool_needed_base
     
     # Log distribution (ground truth)
     seed_dist_gt = dict(zip(*np.unique(y_train_all_gt[seed_indices], return_counts=True)))
     val_dist_gt = dict(zip(*np.unique(y_train_all_gt[val_indices], return_counts=True)))
-    pool_dist_gt = dict(zip(*np.unique(y_pool_gt, return_counts=True)))
+    unlabeled_pool_dist_gt = dict(zip(*np.unique(y_unlabeled_pool_gt, return_counts=True)))
     print(f"   ✅ Seed distribution (stratified, ground truth): {seed_dist_gt}")
     print(f"   ✅ Val distribution (stratified, ground truth): {val_dist_gt}")
-    print(f"   ✅ Pool distribution (ground truth from thief dataset): {pool_dist_gt}")
-    print(f"   ✅ Pool size: {X_pool.shape[0]:,} samples")
-    print(f"      - Target: {pool_needed_base:,} (query_batch={query_batch:,} × num_rounds={num_rounds})")
-    print(f"      - Buffer: +{buffer_size:,} ({buffer_size/pool_needed_base*100:.1f}%) để đảm bảo không thiếu queries")
+    print(f"   ✅ Unlabeled pool distribution (ground truth from thief dataset): {unlabeled_pool_dist_gt}")
+    print(f"   ✅ Unlabeled pool size: {X_unlabeled_pool.shape[0]:,} samples (sẽ được chọn dần trong AL)")
+    print(f"      - AL queries cần: {AL_queries_needed:,} (query_batch={query_batch:,} × num_rounds={num_rounds})")
     del X_train_all
     gc.collect()
 
@@ -655,11 +743,17 @@ def run_extraction(
     )
     print(f"✅ Eval set: {X_eval.shape}")
     print(f"✅ Ground truth labels: {y_eval_gt.shape}")
+    
+    # QUAN TRỌNG: Pad/truncate eval data để khớp với surrogate_feature_dim
+    if dataset_attack_feature_dim != surrogate_feature_dim:
+        print(f"🔄 Đang pad/truncate eval data từ {dataset_attack_feature_dim} lên {surrogate_feature_dim} features...")
+        X_eval = _pad_or_truncate_features(X_eval, surrogate_feature_dim)
+        print(f"   ✅ Eval data shape sau pad/truncate: {X_eval.shape}")
 
     print(f"\n📊 Data split:")
     print(f"  Seed: {X_seed.shape[0]:,}")
     print(f"  Val: {X_val.shape[0]:,}")
-    print(f"  Pool: {X_pool.shape[0]:,}")
+    print(f"  Unlabeled pool: {X_unlabeled_pool.shape[0]:,}")
     print(f"  Eval: {X_eval.shape[0]:,}")
 
     # QUAN TRỌNG: Xử lý dữ liệu trước khi query oracle
@@ -677,54 +771,108 @@ def run_extraction(
     # Lấy model_type thực tế của oracle (không phải attacker_type)
     oracle_model_type = model_type  # Nếu dùng model_name, model_type đã được detect từ oracle_client
     
+    # Kiểm tra xem oracle có normalization_stats_path hay không
+    oracle_has_normalization_stats = False
     if oracle_model_type == "h5":
-        # Keras/H5 Oracle: Cần scale data với RobustScaler
-        print(f"\n🔄 Đang scale dữ liệu trước khi query oracle (Keras/H5 Oracle cần scaled data)...")
-        scaler = RobustScaler()
-        scaler.fit(np.vstack([X_seed, X_val, X_pool]))
+        # Kiểm tra từ oracle client xem có normalization stats không
+        if hasattr(oracle_client, '_oracle'):
+            # BlackBoxOracleClient -> LocalOracleClient -> FlexibleKerasTarget
+            internal_oracle = oracle_client._oracle._oracle if hasattr(oracle_client._oracle, '_oracle') else oracle_client._oracle
+            oracle_has_normalization_stats = getattr(internal_oracle, 'use_normalization', False)
+        elif hasattr(oracle_client, '_oracle') and hasattr(oracle_client._oracle, 'use_normalization'):
+            # LocalOracleClient -> FlexibleKerasTarget
+            oracle_has_normalization_stats = oracle_client._oracle.use_normalization
+        # Hoặc kiểm tra từ normalization_stats_path variable
+        if not oracle_has_normalization_stats:
+            oracle_has_normalization_stats = (normalization_stats_path is not None and 
+                                             normalization_stats_path != "auto-detected" and
+                                             normalization_stats_path != "")
+    
+    
+    if oracle_model_type == "h5":
+        if oracle_has_normalization_stats:
+            # Keras/H5 Oracle có normalization_stats: Oracle sẽ tự động normalize và clip
+            # KHÔNG scale với RobustScaler - chỉ cần raw data!
+            print(f"\n🔄 Oracle có normalization stats - Oracle sẽ tự động normalize và clip")
+            print(f"   ⚠️  KHÔNG scale với RobustScaler - dùng raw data để query oracle")
+            
+            # Dùng raw data để query oracle (oracle sẽ tự normalize và clip)
+            X_eval_s = X_eval
+            X_seed_s = X_seed
+            X_val_s = X_val
+            
+            # Lấy nhãn từ oracle (VỚI RAW DATA - oracle sẽ tự normalize và clip)
+            print(f"\n🔄 Đang lấy nhãn từ oracle (với raw data - oracle sẽ tự normalize và clip)...")
+            y_eval = oracle_client.predict(X_eval_s)
+            y_seed = oracle_client.predict(X_seed_s)
+            y_val = oracle_client.predict(X_val_s)
+            
+            # Nếu attacker cần scaled data cho training, tạo scaler riêng
+            if attacker_type in ["keras", "dual", "cnn"]:
+                print(f"\n⚠️  LƯU Ý: Oracle tự normalize, nhưng surrogate là {attacker_type} (cần scaled data)")
+            elif attacker_type in ["xgb", "tabnet"]:
+                print(f"\n✅ Oracle tự normalize, surrogate là {attacker_type} (không cần scaled data)")
+                print(f"   🔄 Sẽ scale data riêng cho surrogate model training sau...")
+                scaler = RobustScaler()
+                scaler.fit(np.vstack([X_seed, X_val, X_unlabeled_pool]))
+                # Tạo scaled version cho surrogate training
+                X_eval_s = _clip_scale(scaler, X_eval)
+                X_seed_s = _clip_scale(scaler, X_seed)
+                X_val_s = _clip_scale(scaler, X_val)
+        else:
+            # Keras/H5 Oracle KHÔNG có normalization_stats: Cần scale với RobustScaler
+            print(f"\n🔄 Đang scale dữ liệu trước khi query oracle (Keras/H5 Oracle không có normalization stats, cần scaled data)...")
+            scaler = RobustScaler()
+            scaler.fit(np.vstack([X_seed, X_val, X_unlabeled_pool]))
 
-        X_eval_s = _clip_scale(scaler, X_eval)
-        X_seed_s = _clip_scale(scaler, X_seed)
-        X_val_s = _clip_scale(scaler, X_val)
-        X_pool_s = _clip_scale(scaler, X_pool)
-        
-        print(f"✅ Đã scale dữ liệu")
-        print(f"   - X_eval_s shape: {X_eval_s.shape}")
-        print(f"   - X_seed_s shape: {X_seed_s.shape}")
-        print(f"   - X_val_s shape: {X_val_s.shape}")
-        print(f"   - X_pool_s shape: {X_pool_s.shape}")
-        
-        # Lấy nhãn từ oracle (VỚI DỮ LIỆU ĐÃ SCALE)
-        print(f"\n🔄 Đang lấy nhãn từ oracle (với dữ liệu đã scale cho Keras Oracle)...")
-        y_eval = oracle_client.predict(X_eval_s)
-        y_seed = oracle_client.predict(X_seed_s)
-        y_val = oracle_client.predict(X_val_s)
+            X_eval_s = _clip_scale(scaler, X_eval)
+            X_seed_s = _clip_scale(scaler, X_seed)
+            X_val_s = _clip_scale(scaler, X_val)
+            # X_unlabeled_pool_s sẽ được tạo sau trong AL loop nếu cần
+            
+            print(f"✅ Đã scale dữ liệu")
+            print(f"   - X_eval_s shape: {X_eval_s.shape}")
+            print(f"   - X_seed_s shape: {X_seed_s.shape}")
+            print(f"   - X_val_s shape: {X_val_s.shape}")
+            print(f"   - X_unlabeled_pool_s: sẽ được tạo sau trong AL loop nếu cần")
+            
+            # Lấy nhãn từ oracle (VỚI DỮ LIỆU ĐÃ SCALE)
+            print(f"\n🔄 Đang lấy nhãn từ oracle (với dữ liệu đã scale cho Keras Oracle)...")
+            y_eval = oracle_client.predict(X_eval_s)
+            y_seed = oracle_client.predict(X_seed_s)
+            y_val = oracle_client.predict(X_val_s)
     else:
-        # LightGBM Oracle: KHÔNG scale với RobustScaler - chỉ cần raw data
-        # FlexibleLGBTarget sẽ tự động normalize với normalization_stats_path
-        print(f"\n🔄 Đang lấy nhãn từ oracle (LightGBM Oracle - KHÔNG scale, sẽ tự động normalize)...")
+        # Non-Keras Oracle (LightGBM / XGBoost / TabNet / sklearn):
+        # - Oracle luôn nhận raw features
+        # - Nếu cần normalize (LightGBM/TabNet), oracle sẽ tự xử lý nội bộ
+        print(f"\n🔄 Đang lấy nhãn từ oracle ({oracle_model_type.upper()} Oracle - dùng raw features, preprocessing nội bộ nếu cần)...")
         y_eval = oracle_client.predict(X_eval)
         y_seed = oracle_client.predict(X_seed)
         y_val = oracle_client.predict(X_val)
         
-        # Với LightGBM Oracle, KHÔNG scale data - dùng raw data
+        # Với các oracle không phải Keras, KHÔNG scale data khi query oracle
         X_eval_s = X_eval
         X_seed_s = X_seed
         X_val_s = X_val
-        X_pool_s = X_pool
+        # X_unlabeled_pool_s sẽ được tạo sau trong AL loop nếu cần
         
-        # Nếu attacker_type là keras/dual (cần scaled data cho training), 
+        # Nếu attacker_type là keras/dual/cnn (cần scaled data cho training),
         # cần scale riêng cho surrogate model training sau này
-        if attacker_type in ["keras", "dual"]:
-            print(f"\n⚠️  LƯU Ý: Oracle là LightGBM (raw data), nhưng surrogate là {attacker_type} (cần scaled data)")
-            print(f"   🔄 Sẽ scale data riêng cho surrogate model training sau...")
+        if attacker_type in ["keras", "dual", "cnn"]:
+            print(f"\n⚠️  LƯU Ý: Oracle là {oracle_model_type.upper()} (raw data), nhưng surrogate là {attacker_type} (cần scaled data)")
+        elif attacker_type in ["xgb", "tabnet"]:
+            # Oracle (lgb/xgb/tabnet/sklearn) làm việc trực tiếp trên raw features.
+            # Surrogate xgb/tabnet thường huấn luyện tốt hơn với dữ liệu đã được scale,
+            # nên ta chỉ scale bản sao dùng cho training/inference surrogate.
+            print(f"\n✅ Oracle là {oracle_model_type.upper()} (raw data), surrogate là {attacker_type} (oracle KHÔNG scale, chỉ surrogate được scale)")
+            print(f"   🔄 Sẽ scale dữ liệu RIÊNG cho surrogate model training (không ảnh hưởng đến oracle)")
             scaler = RobustScaler()
-            scaler.fit(np.vstack([X_seed, X_val, X_pool]))
+            scaler.fit(np.vstack([X_seed, X_val, X_unlabeled_pool]))
             # Tạo scaled version cho surrogate training
             X_eval_s = _clip_scale(scaler, X_eval)
             X_seed_s = _clip_scale(scaler, X_seed)
             X_val_s = _clip_scale(scaler, X_val)
-            X_pool_s = _clip_scale(scaler, X_pool)
+            # X_unlabeled_pool_s sẽ được tạo sau trong AL loop nếu cần
     print(f"✅ Oracle labels retrieved")
     eval_dist = dict(zip(*np.unique(y_eval, return_counts=True)))
     seed_dist = dict(zip(*np.unique(y_seed, return_counts=True)))
@@ -794,7 +942,12 @@ def run_extraction(
                 print(f"   ⚠️  Không thể kiểm tra probabilities: {e}")
 
     metrics_history = []
-    labeled_X = X_seed_s
+    # Khởi tạo labeled_X dựa trên attacker_type
+    # KNN, LGB, XGB, và TabNet cần raw data, Keras/Dual/CNN cần scaled data
+    if attacker_type in ["lgb", "knn", "xgb", "tabnet"]:
+        labeled_X = X_seed  # Raw data cho LGB và KNN
+    else:
+        labeled_X = X_seed_s  # Scaled data cho Keras/Dual/CNN
     labeled_y = y_seed
 
     def evaluate(model, round_id: int, total_labels: int):
@@ -852,6 +1005,8 @@ def run_extraction(
             "labels_used": int(total_labels),
             "queries_used": int(actual_queries),  # Số queries thực tế (chỉ tính active learning)
             "optimal_threshold": float(best_threshold),
+            "threshold_optimization_method": "f1_on_eval_set",  # Method dùng để tìm threshold
+            "threshold_optimization_dataset": "eval_set_with_ground_truth",  # Dataset dùng để tìm threshold
             "surrogate_acc": float(acc),  # Accuracy vs Ground Truth
             "surrogate_acc_vs_oracle": float(acc_vs_oracle),  # Accuracy vs Oracle (tương tự agreement)
             "surrogate_balanced_acc": float(balanced_acc),  # Quan trọng với class imbalance
@@ -870,7 +1025,9 @@ def run_extraction(
     # early_stopping=30: patience đủ lớn để vượt qua local minima
     # num_epochs: đủ epochs để model học tốt với nhiều dữ liệu (mặc định 100 theo nghiên cứu)
     if attacker_type == "lgb":
-        # LightGBM attacker không cần scale data
+        # LightGBM attacker không cần scale data - đảm bảo labeled_X là raw data
+        if labeled_X is X_seed_s:
+            labeled_X = X_seed  # Chuyển sang raw data
         # Sử dụng hyperparameters tối ưu để khớp với target model
         attacker = LGBAttacker(seed=seed)
         attacker.train_model(labeled_X, labeled_y, X_val, y_val, boosting_rounds=2000, early_stopping=100)
@@ -915,8 +1072,8 @@ def run_extraction(
             except ValueError:
                 auc = float("nan")
 
-            # Tính số queries thực tế (không tính seed và val)
-            actual_queries = total_labels - seed_size - val_size
+            # Tính số queries thực tế (không tính seed, val không được thêm vào pool)
+            actual_queries = max(0, total_labels - seed_size)
             
             # Log metrics để giải thích sự khác biệt
             print(f"\n📊 Round {round_id} Evaluation:")
@@ -931,6 +1088,8 @@ def run_extraction(
                 "labels_used": int(total_labels),
                 "queries_used": int(actual_queries),  # Số queries thực tế (chỉ tính active learning)
                 "optimal_threshold": float(best_threshold),
+                "threshold_optimization_method": "f1_on_eval_set",  # Method dùng để tìm threshold
+                "threshold_optimization_dataset": "eval_set_with_ground_truth",  # Dataset dùng để tìm threshold
                 "surrogate_acc": float(acc),  # Accuracy vs Ground Truth
                 "surrogate_acc_vs_oracle": float(acc_vs_oracle),  # Accuracy vs Oracle (tương tự agreement)
                 "surrogate_balanced_acc": float(balanced_acc),  # Quan trọng với class imbalance
@@ -948,8 +1107,8 @@ def run_extraction(
         evaluate(attacker, round_id=0, total_labels=labeled_X.shape[0])
     elif attacker_type == "dual":
         # DualDNN attacker cần scale data và cả ground truth labels (oracle predictions)
-        # Sử dụng feature_dim thực tế từ dataset, không phải từ target model
-        attacker = KerasDualAttacker(early_stopping=30, seed=seed, input_shape=(feature_dim,))
+        # QUAN TRỌNG: Sử dụng surrogate_feature_dim (từ target model), không phải dataset attack
+        attacker = KerasDualAttacker(early_stopping=30, seed=seed, input_shape=(surrogate_feature_dim,))
         # DualDNN train với (X, y_true) - y_true là oracle labels
         attacker.train_model(labeled_X, labeled_y, labeled_y, X_val_s, y_val, y_val, num_epochs=num_epochs)
         
@@ -1011,8 +1170,8 @@ def run_extraction(
             except ValueError:
                 auc = float("nan")
             
-            # Tính số queries thực tế
-            actual_queries = total_labels - seed_size - val_size
+            # Tính số queries thực tế (không tính seed, val không được thêm vào pool)
+            actual_queries = max(0, total_labels - seed_size)
             
             print(f"\n📊 Round {round_id} Evaluation (DualDNN):")
             print(f"   Agreement (vs Oracle): {agreement:.4f} ({agreement*100:.2f}%)")
@@ -1024,6 +1183,8 @@ def run_extraction(
                 "labels_used": int(total_labels),
                 "queries_used": int(actual_queries),
                 "optimal_threshold": float(best_threshold),
+                "threshold_optimization_method": "f1_on_eval_set",  # Method dùng để tìm threshold
+                "threshold_optimization_dataset": "eval_set_with_ground_truth",  # Dataset dùng để tìm threshold
                 "surrogate_acc": float(acc),
                 "surrogate_acc_vs_oracle": float(acc_vs_oracle),
                 "surrogate_balanced_acc": float(balanced_acc),
@@ -1039,48 +1200,287 @@ def run_extraction(
         
         evaluate = evaluate_dual
         evaluate(attacker, round_id=0, total_labels=labeled_X.shape[0])
+    elif attacker_type == "cnn":
+        # CNN attacker cần scale data và reshape thành (n_samples, n_features, 1)
+        # QUAN TRỌNG: Sử dụng surrogate_feature_dim (từ target model), không phải dataset attack
+        attacker = CNNAttacker(early_stopping=30, seed=seed, input_shape=(surrogate_feature_dim, 1))
+        attacker.train_model(labeled_X, labeled_y, X_val_s, y_val, num_epochs=num_epochs)
+        # CNN dùng cùng evaluate function như keras (dùng scaled data và np.squeeze)
+        evaluate(attacker, round_id=0, total_labels=labeled_X.shape[0])
+    elif attacker_type == "knn":
+        # KNN attacker dùng raw data để phù hợp với sklearn
+        # Đảm bảo labeled_X là raw data
+        if labeled_X is X_seed_s:
+            labeled_X = X_seed  # Chuyển sang raw data
+        # Lưu ý: KNN không có validation set trong training, nhưng vẫn cần X_val, y_val cho evaluate
+        attacker = KNNAttacker(seed=seed)
+        # KNN train với raw data
+        attacker.train_model(labeled_X, labeled_y, X_val, y_val)
+        
+        def evaluate_knn(model, round_id, total_labels):
+            # KNN có thể dùng raw hoặc scaled data - dùng raw để nhất quán
+            probs = model(X_eval)
+            # KNN predict trả về 1D array
+            if probs.ndim > 1:
+                probs = probs.flatten()
+            
+            # Tối ưu threshold dựa trên F1-score với ground truth labels
+            thresholds = np.linspace(0.1, 0.9, 81)
+            best_f1 = -1
+            best_threshold = 0.5
+            best_preds = (probs >= 0.5).astype(int)
+            
+            for thresh in thresholds:
+                preds_thresh = (probs >= thresh).astype(int)
+                _, _, f1_thresh, _ = precision_recall_fscore_support(
+                    y_eval_gt, preds_thresh, average="binary", zero_division=0
+                )
+                if f1_thresh > best_f1:
+                    best_f1 = f1_thresh
+                    best_threshold = thresh
+                    best_preds = preds_thresh
+            
+            preds = best_preds
+            
+            agreement = (preds == y_eval).mean()
+            acc = accuracy_score(y_eval_gt, preds)
+            acc_vs_oracle = accuracy_score(y_eval, preds)
+            balanced_acc = balanced_accuracy_score(y_eval_gt, preds)
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                y_eval_gt, preds, average="binary", zero_division=0
+            )
+            try:
+                auc = roc_auc_score(y_eval_gt, probs)
+            except ValueError:
+                auc = float("nan")
+            
+            actual_queries = max(0, total_labels - seed_size)
+            
+            print(f"\n📊 Round {round_id} Evaluation (KNN):")
+            print(f"   Agreement (vs Oracle): {agreement:.4f} ({agreement*100:.2f}%)")
+            print(f"   Accuracy (vs Ground Truth): {acc:.4f} ({acc*100:.2f}%)")
+            print(f"   Oracle Accuracy (vs Ground Truth): {oracle_acc_vs_gt:.4f} ({oracle_acc_vs_gt*100:.2f}%)")
+            
+            metrics = {
+                "round": round_id,
+                "labels_used": int(total_labels),
+                "queries_used": int(actual_queries),
+                "optimal_threshold": float(best_threshold),
+                "threshold_optimization_method": "f1_on_eval_set",
+                "threshold_optimization_dataset": "eval_set_with_ground_truth",
+                "surrogate_acc": float(acc),
+                "surrogate_acc_vs_oracle": float(acc_vs_oracle),
+                "surrogate_balanced_acc": float(balanced_acc),
+                "surrogate_auc": float(auc),
+                "surrogate_precision": float(precision),
+                "surrogate_recall": float(recall),
+                "surrogate_f1": float(f1),
+                "agreement_with_target": float(agreement),
+                "oracle_acc_vs_gt": float(oracle_acc_vs_gt),
+            }
+            metrics_history.append(metrics)
+            return metrics
+        
+        evaluate = evaluate_knn
+        evaluate(attacker, round_id=0, total_labels=labeled_X.shape[0])
+    elif attacker_type == "xgb":
+        # XGBoost attacker dùng raw data (giống LGB)
+        # Đảm bảo labeled_X là raw data
+        if labeled_X is X_seed_s:
+            labeled_X = X_seed  # Chuyển sang raw data
+        attacker = XGBoostAttacker(seed=seed)
+        attacker.train_model(labeled_X, labeled_y, X_val, y_val, boosting_rounds=200, early_stopping=20)
+        
+        # XGBoost dùng raw data để evaluate (giống LGB)
+        def evaluate_xgb(model, round_id, total_labels):
+            probs = model(X_eval)
+            # XGBoost predict trả về 1D array
+            if probs.ndim > 1:
+                probs = probs.flatten()
+            
+            # Tối ưu threshold dựa trên F1-score với ground truth labels
+            thresholds = np.linspace(0.1, 0.9, 81)
+            best_f1 = -1
+            best_threshold = 0.5
+            best_preds = (probs >= 0.5).astype(int)
+            
+            for thresh in thresholds:
+                preds_thresh = (probs >= thresh).astype(int)
+                _, _, f1_thresh, _ = precision_recall_fscore_support(
+                    y_eval_gt, preds_thresh, average="binary", zero_division=0
+                )
+                if f1_thresh > best_f1:
+                    best_f1 = f1_thresh
+                    best_threshold = thresh
+                    best_preds = preds_thresh
+            
+            preds = best_preds
+            
+            agreement = (preds == y_eval).mean()
+            acc = accuracy_score(y_eval_gt, preds)
+            acc_vs_oracle = accuracy_score(y_eval, preds)
+            balanced_acc = balanced_accuracy_score(y_eval_gt, preds)
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                y_eval_gt, preds, average="binary", zero_division=0
+            )
+            
+            try:
+                auc = roc_auc_score(y_eval_gt, probs)
+            except ValueError:
+                auc = float("nan")
+            
+            metrics = {
+                "round": round_id,
+                "labels_used": total_labels,
+                "surrogate_acc": float(acc),
+                "surrogate_balanced_acc": float(balanced_acc),
+                "surrogate_auc": float(auc),
+                "surrogate_precision": float(precision),
+                "surrogate_recall": float(recall),
+                "surrogate_f1": float(f1),
+                "agreement_with_target": float(agreement),
+                "optimal_threshold": float(best_threshold),
+                "oracle_acc_vs_gt": float(oracle_acc_vs_gt),
+            }
+            metrics_history.append(metrics)
+            return metrics
+        
+        evaluate = evaluate_xgb
+        evaluate(attacker, round_id=0, total_labels=labeled_X.shape[0])
+    elif attacker_type == "tabnet":
+        # TabNet attacker dùng raw data (giống LGB và XGB)
+        # Đảm bảo labeled_X là raw data
+        if labeled_X is X_seed_s:
+            labeled_X = X_seed  # Chuyển sang raw data
+        attacker = TabNetAttacker(seed=seed)
+        # Tăng số epoch và patience để TabNet học tốt hơn (nhất là khi có nhiều queries)
+        attacker.train_model(
+            labeled_X,
+            labeled_y,
+            X_val,
+            y_val,
+            max_epochs=100,
+            patience=100000,  # effectively disable early stopping
+            batch_size=2048,
+        )
+        
+        # TabNet dùng raw data để evaluate (giống LGB và XGB)
+        def evaluate_tabnet(model, round_id, total_labels):
+            probs = model(X_eval)
+            # TabNet predict_proba trả về 1D hoặc 2D array
+            if probs.ndim > 1:
+                probs = probs.flatten()
+            
+            # Tối ưu threshold dựa trên F1-score với ground truth labels
+            thresholds = np.linspace(0.1, 0.9, 81)
+            best_f1 = -1
+            best_threshold = 0.5
+            best_preds = (probs >= 0.5).astype(int)
+            
+            for thresh in thresholds:
+                preds_thresh = (probs >= thresh).astype(int)
+                _, _, f1_thresh, _ = precision_recall_fscore_support(
+                    y_eval_gt, preds_thresh, average="binary", zero_division=0
+                )
+                if f1_thresh > best_f1:
+                    best_f1 = f1_thresh
+                    best_threshold = thresh
+                    best_preds = preds_thresh
+            
+            preds = best_preds
+            
+            agreement = (preds == y_eval).mean()
+            acc = accuracy_score(y_eval_gt, preds)
+            acc_vs_oracle = accuracy_score(y_eval, preds)
+            balanced_acc = balanced_accuracy_score(y_eval_gt, preds)
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                y_eval_gt, preds, average="binary", zero_division=0
+            )
+            
+            try:
+                auc = roc_auc_score(y_eval_gt, probs)
+            except ValueError:
+                auc = float("nan")
+            
+            metrics = {
+                "round": round_id,
+                "labels_used": total_labels,
+                "surrogate_acc": float(acc),
+                "surrogate_balanced_acc": float(balanced_acc),
+                "surrogate_auc": float(auc),
+                "surrogate_precision": float(precision),
+                "surrogate_recall": float(recall),
+                "surrogate_f1": float(f1),
+                "agreement_with_target": float(agreement),
+                "optimal_threshold": float(best_threshold),
+                "oracle_acc_vs_gt": float(oracle_acc_vs_gt),
+            }
+            metrics_history.append(metrics)
+            return metrics
+        
+        evaluate = evaluate_tabnet
+        evaluate(attacker, round_id=0, total_labels=labeled_X.shape[0])
     else:
         # Keras attacker cần scale data
-        attacker = KerasAttacker(early_stopping=30, seed=seed, input_shape=(feature_dim,))
+        # QUAN TRỌNG: Sử dụng surrogate_feature_dim (từ target model), không phải dataset attack
+        attacker = KerasAttacker(early_stopping=30, seed=seed, input_shape=(surrogate_feature_dim,))
         attacker.train_model(labeled_X, labeled_y, X_val_s, y_val, num_epochs=num_epochs)
         evaluate(attacker, round_id=0, total_labels=labeled_X.shape[0])
 
     # Track tổng queries để đảm bảo chính xác
-    total_queries_target = query_batch * num_rounds
-    total_queries_accumulated = 0
+    # QUAN TRỌNG: Query budget = seed + val + AL queries
+    AL_queries_target = query_batch * num_rounds
+    total_queries_target = seed_size + val_size + AL_queries_target  # Tổng query budget
+    total_queries_accumulated = seed_size + val_size  # Seed và val đã được query
     # Cho phép lệch tối đa 10% (dư chứ không được thiếu)
     min_queries_acceptable = int(total_queries_target * 0.9)  # Ít nhất 90% của target
     max_queries_acceptable = int(total_queries_target * 1.1)  # Tối đa 110% của target
     
-    print(f"\n📋 Mục tiêu queries: {total_queries_target:,} ({query_batch:,} queries/round × {num_rounds} rounds)")
+    print(f"\n📋 Query Budget Tracking:")
+    print(f"   Seed queries: {seed_size:,} (đã query)")
+    print(f"   Val queries: {val_size:,} (đã query)")
+    print(f"   AL queries target: {AL_queries_target:,} ({query_batch:,} queries/round × {num_rounds} rounds)")
+    print(f"   Total query budget: {total_queries_target:,} (seed + val + AL)")
+    print(f"   Queries đã dùng: {total_queries_accumulated:,} (seed + val)")
+    print(f"   Queries còn lại: {AL_queries_target:,} (AL queries)")
     print(f"   📊 Cho phép lệch: {min_queries_acceptable:,} - {max_queries_acceptable:,} queries (90% - 110%)")
     print(f"   ⚠️  Quan trọng: Không được thiếu queries! (tối thiểu {min_queries_acceptable:,})")
     
-    # Kiểm tra pool ban đầu có đủ không
-    if X_pool.shape[0] < total_queries_target:
-        print(f"\n⚠️  CẢNH BÁO: Pool ban đầu ({X_pool.shape[0]:,}) < Tổng queries dự kiến ({total_queries_target:,})")
-        print(f"   💡 Pool sẽ cạn kiệt trước khi đạt đủ queries. Sẽ cố gắng lấy tối đa có thể.")
+    # Kiểm tra unlabeled pool có đủ không
+    if X_unlabeled_pool.shape[0] < AL_queries_target:
+        print(f"\n⚠️  CẢNH BÁO: Unlabeled pool ({X_unlabeled_pool.shape[0]:,}) < AL queries dự kiến ({AL_queries_target:,})")
+        print(f"   💡 Unlabeled pool sẽ cạn kiệt trước khi đạt đủ queries. Sẽ cố gắng lấy tối đa có thể.")
+    
+    # Scale unlabeled pool nếu cần (cho oracle query và attacker training)
+    X_unlabeled_pool_s = None
+    if oracle_model_type == "h5" or attacker_type in ["keras", "dual", "cnn"]:
+        # Cần scale cho oracle (nếu h5) hoặc attacker (nếu keras/dual/cnn)
+        if scaler is None:
+            # Tạo scaler từ seed, val, và unlabeled pool
+            scaler = RobustScaler()
+            scaler.fit(np.vstack([X_seed, X_val, X_unlabeled_pool]))
+        X_unlabeled_pool_s = _clip_scale(scaler, X_unlabeled_pool)
     
     for query_round in range(1, num_rounds + 1):
-        # Kiểm tra xem còn cần bao nhiêu queries nữa
-        queries_remaining_needed = total_queries_target - total_queries_accumulated
+        # Kiểm tra xem còn cần bao nhiêu AL queries nữa
+        AL_queries_remaining_needed = AL_queries_target - (total_queries_accumulated - seed_size - val_size)
         
-        # Nếu đã đạt đủ queries, dừng lại
+        # Nếu đã đạt đủ AL queries, dừng lại
         if total_queries_accumulated >= total_queries_target:
-            print(f"\n✅ Đã đạt đủ queries dự kiến ({total_queries_target:,}). Dừng active learning.")
+            print(f"\n✅ Đã đạt đủ query budget ({total_queries_target:,}). Dừng active learning.")
             break
         
-        # Nếu pool còn lại ít hơn query_batch, vẫn cố gắng lấy tối đa có thể
-        pool_remaining = X_pool.shape[0]
-        queries_to_get_this_round = min(query_batch, pool_remaining, queries_remaining_needed)
+        # Nếu unlabeled pool còn lại ít hơn query_batch, vẫn cố gắng lấy tối đa có thể
+        unlabeled_pool_remaining = X_unlabeled_pool.shape[0]
+        queries_to_get_this_round = min(query_batch, unlabeled_pool_remaining, AL_queries_remaining_needed)
         
         if queries_to_get_this_round <= 0:
-            print(f"\n⚠️  Round {query_round}: Không còn queries để lấy. Pool: {pool_remaining}, Cần: {queries_remaining_needed}")
+            print(f"\n⚠️  Round {query_round}: Không còn queries để lấy. Unlabeled pool: {unlabeled_pool_remaining}, Cần: {AL_queries_remaining_needed}")
             break
         
-        if pool_remaining < query_batch:
-            print(f"\n⚠️  Round {query_round}: Pool còn lại ({pool_remaining}) < query_batch ({query_batch}).")
-            print(f"   🔄 Sẽ lấy tối đa {queries_to_get_this_round} queries từ pool còn lại.")
+        if unlabeled_pool_remaining < query_batch:
+            print(f"\n⚠️  Round {query_round}: Unlabeled pool còn lại ({unlabeled_pool_remaining}) < query_batch ({query_batch}).")
+            print(f"   🔄 Sẽ lấy tối đa {queries_to_get_this_round} queries từ unlabeled pool còn lại.")
         
         # CẢI TIẾN: Stratified Entropy Sampling với Pre-filtering bằng Thief Dataset Labels
         # Giả định: Mẫu trong thief dataset đã biết nhãn, mẫu tương tự trong pool sẽ có nhãn tương tự
@@ -1089,34 +1489,40 @@ def run_extraction(
         # Vẫn giữ logic cân bằng class
         print(f"\n🔄 Round {query_round}: Đang chọn queries bằng Stratified Entropy Sampling với Pre-filtering (thief dataset labels)...")
         
-        # QUAN TRỌNG: Tách riêng pool để query oracle và pool để train attacker
+        # QUAN TRỌNG: Tách riêng unlabeled pool để query oracle và pool để train attacker
         # - Pool để query oracle: dựa trên oracle_model_type (raw data cho LightGBM, scaled cho Keras)
         # - Pool để train attacker: dựa trên attacker_type (scaled cho keras/dual, raw cho lgb)
         # Oracle query PHẢI dùng data phù hợp với oracle model, không phải attacker model!
         
-        # Pool để query oracle - dựa trên oracle_model_type
+        # Unlabeled pool để query oracle - dựa trên oracle_model_type
+        # QUAN TRỌNG: Nếu oracle có normalization stats, dùng raw data (oracle tự normalize)
         if oracle_model_type == "h5":
-            # Keras Oracle: cần scaled data
-            pool_for_oracle = X_pool_s
+            if oracle_has_normalization_stats:
+                # Keras Oracle có normalization stats: dùng raw data (oracle tự normalize và clip)
+                pool_for_oracle = X_unlabeled_pool
+            else:
+                # Keras Oracle không có normalization stats: cần scaled data
+                pool_for_oracle = X_unlabeled_pool_s if X_unlabeled_pool_s is not None else X_unlabeled_pool
         else:
             # LightGBM Oracle: cần raw data (KHÔNG scale!)
-            pool_for_oracle = X_pool
+            pool_for_oracle = X_unlabeled_pool
         
-        # Pool để train attacker - dựa trên attacker_type
-        if attacker_type in ["keras", "dual"]:
-            # Keras/Dual attacker: cần scaled data
-            pool_for_entropy = X_pool_s if X_pool_s is not None else X_pool
+        # Unlabeled pool để train attacker - dựa trên attacker_type
+        # xgb và tabnet không cần scaling (giống lgb và knn)
+        if attacker_type in ["keras", "dual", "cnn"]:
+            # Keras/Dual/CNN attacker: cần scaled data
+            pool_for_entropy = X_unlabeled_pool_s if X_unlabeled_pool_s is not None else X_unlabeled_pool
         else:
-            # LightGBM attacker: cần raw data
-            pool_for_entropy = X_pool
+            # LightGBM/KNN attacker: cần raw data
+            pool_for_entropy = X_unlabeled_pool
         
         pool_size = pool_for_oracle.shape[0]  # Dùng pool_for_oracle để pre-filter
         
         # BƯỚC 1: Pre-filtering dựa trên labels của thief dataset
-        # Sử dụng y_pool_gt (labels từ thief dataset) để chọn pool cân bằng TRƯỚC khi query oracle
-        print(f"   🔄 Pre-filtering pool dựa trên labels của thief dataset...")
-        pool_dist_gt_current = dict(zip(*np.unique(y_pool_gt, return_counts=True)))
-        print(f"   📊 Pool distribution (thief dataset labels): {pool_dist_gt_current}")
+        # Sử dụng y_unlabeled_pool_gt (labels từ thief dataset) để chọn pool cân bằng TRƯỚC khi query oracle
+        print(f"   🔄 Pre-filtering unlabeled pool dựa trên labels của thief dataset...")
+        pool_dist_gt_current = dict(zip(*np.unique(y_unlabeled_pool_gt, return_counts=True)))
+        print(f"   📊 Unlabeled pool distribution (thief dataset labels): {pool_dist_gt_current}")
         
         # Chọn subset từ pool dựa trên labels của thief dataset để đảm bảo cân bằng
         # Mục tiêu: Chọn đủ samples từ mỗi class để có thể chọn queries cân bằng sau này
@@ -1128,7 +1534,7 @@ def run_extraction(
         
         pool_query_idx_list = []
         for class_label in [0, 1]:
-            class_indices_in_pool = np.where(y_pool_gt == class_label)[0]
+            class_indices_in_pool = np.where(y_unlabeled_pool_gt == class_label)[0]
             if len(class_indices_in_pool) == 0:
                 continue
             
@@ -1142,7 +1548,7 @@ def run_extraction(
             pool_query_idx = np.concatenate(pool_query_idx_list)
             rng.shuffle(pool_query_idx)  # Shuffle để trộn classes
         else:
-            # Fallback: Nếu không có class nào, dùng toàn bộ pool
+            # Fallback: Nếu không có class nào, dùng toàn bộ unlabeled pool
             pool_query_idx = np.arange(pool_size)
         
         # Đảm bảo không vượt quá query_pool_size
@@ -1152,7 +1558,7 @@ def run_extraction(
         # Lấy data từ pool_for_oracle (raw/scaled tùy oracle model type) để query oracle
         # QUAN TRỌNG: Oracle query PHẢI dùng pool_for_oracle, không phải pool_for_entropy!
         X_pool_query = pool_for_oracle[pool_query_idx]
-        y_pool_query_gt = y_pool_gt[pool_query_idx]  # Labels từ thief dataset (ground truth của pool)
+        y_pool_query_gt = y_unlabeled_pool_gt[pool_query_idx]  # Labels từ thief dataset (ground truth của unlabeled pool)
         
         # Log distribution sau pre-filtering
         pool_query_dist_gt = dict(zip(*np.unique(y_pool_query_gt, return_counts=True)))
@@ -1182,11 +1588,12 @@ def run_extraction(
         # vì chúng ta cần labels thực tế từ target model để đảm bảo accuracy
         # Với dualDNN, cần oracle labels cho entropy sampling
         
-        # QUAN TRỌNG: Để tính entropy cho attacker, cần dùng pool_for_entropy (scaled cho keras/dual)
+        # QUAN TRỌNG: Để tính entropy cho attacker, cần dùng pool_for_entropy (scaled cho keras/dual/cnn)
         # Nhưng X_pool_query là từ pool_for_oracle (raw cho LightGBM oracle)
         # Cần map về pool_for_entropy để tính entropy đúng
-        if attacker_type in ["keras", "dual"] and oracle_model_type == "lgb":
-            # Oracle là LightGBM (raw), nhưng attacker là keras/dual (cần scaled)
+        # xgb và tabnet không cần scaling (giống lgb và knn)
+        if attacker_type in ["keras", "dual", "cnn"] and oracle_model_type == "lgb":
+            # Oracle là LightGBM (raw), nhưng attacker là keras/dual/cnn (cần scaled)
             # Cần lấy scaled version của X_pool_query để tính entropy
             X_pool_query_for_entropy = pool_for_entropy[pool_query_idx]
         else:
@@ -1240,89 +1647,74 @@ def run_extraction(
         
         # Kết hợp queries từ cả 2 classes
         if len(query_idx_list) > 0:
-            query_idx = np.concatenate(query_idx_list)
+            # query_idx_list chứa indices trong unlabeled pool gốc (đã được map từ pool_query_idx)
+            query_idx_in_unlabeled_pool = np.concatenate(query_idx_list)
         else:
-            # Fallback: Nếu không có class nào, dùng entropy sampling thông thường
-            print(f"   ⚠️  Fallback: Dùng entropy sampling thông thường (không có class nào)")
-            entropy_candidates = min(10000, pool_for_oracle.shape[0])
-            # Với dualDNN, cần tạo pool_labels_for_entropy từ pool đã query
-            if dual_flag:
-                # Query oracle trên pool_for_oracle (raw data cho LightGBM) để lấy labels cho entropy sampling
-                pool_size_for_fallback = min(pool_for_oracle.shape[0], max(20000, queries_to_get_this_round * 10))
-                if pool_size_for_fallback < pool_for_oracle.shape[0]:
-                    pool_fallback_idx = rng.choice(pool_for_oracle.shape[0], size=pool_size_for_fallback, replace=False)
-                    pool_fallback_X = pool_for_oracle[pool_fallback_idx]
-                else:
-                    pool_fallback_idx = np.arange(pool_for_oracle.shape[0])
-                    pool_fallback_X = pool_for_oracle
-                
-                pool_labels_for_fallback = oracle_client.predict(pool_fallback_X)
-                pool_labels_for_entropy_full = np.zeros(pool_for_oracle.shape[0])
-                if pool_size_for_fallback < pool_for_oracle.shape[0]:
-                    pool_labels_for_entropy_full[pool_fallback_idx] = pool_labels_for_fallback
-                else:
-                    pool_labels_for_entropy_full = pool_labels_for_fallback
-            else:
-                pool_labels_for_entropy_full = np.zeros(pool_for_oracle.shape[0])
+            # Fallback: Nếu không có class nào, dùng entropy sampling thông thường từ pool_query
+            print(f"   ⚠️  Fallback: Dùng entropy sampling thông thường từ pool_query (không có class nào)")
+            entropy_candidates = min(10000, X_pool_query_for_entropy.shape[0])
             
-            # Tính entropy trên pool_for_entropy (scaled nếu attacker là keras/dual)
+            # Với dualDNN, dùng labels đã query từ oracle
+            pool_labels_for_entropy = y_pool_query if attacker_type == "dual" else np.zeros(X_pool_query_for_entropy.shape[0])
+            
+            # Tính entropy trên pool_query (đã query oracle)
             q_idx = entropy_sampling(
                 attacker, 
-                pool_for_entropy, 
-                pool_labels_for_entropy_full,
+                X_pool_query_for_entropy, 
+                pool_labels_for_entropy,
                 n_instances=entropy_candidates,
                 dual=dual_flag
             )
-            X_med = pool_for_entropy[q_idx]
+            X_med = X_pool_query_for_entropy[q_idx]
             num_clusters = min(queries_to_get_this_round, X_med.shape[0])
             if num_clusters > 0:
                 kmed = KMedoids(n_clusters=num_clusters, init='k-medoids++', random_state=seed)
                 kmed.fit(X_med)
                 query_idx_in_med = kmed.medoid_indices_
-                query_idx = q_idx[query_idx_in_med]
+                query_idx_in_pool_query = q_idx[query_idx_in_med]
             else:
-                query_idx = q_idx[:min(queries_to_get_this_round, len(q_idx))]
+                query_idx_in_pool_query = q_idx[:min(queries_to_get_this_round, len(q_idx))]
+            
+            # Map về indices trong unlabeled pool gốc
+            query_idx_in_unlabeled_pool = pool_query_idx[query_idx_in_pool_query]
         
         # Đảm bảo không vượt quá queries_to_get_this_round
-        if len(query_idx) > queries_to_get_this_round:
-            query_idx = query_idx[:queries_to_get_this_round]
+        if len(query_idx_in_unlabeled_pool) > queries_to_get_this_round:
+            query_idx_in_unlabeled_pool = query_idx_in_unlabeled_pool[:queries_to_get_this_round]
         
-        print(f"   ✅ Đã chọn {len(query_idx)} queries (target: {queries_to_get_this_round})")
+        print(f"   ✅ Đã chọn {len(query_idx_in_unlabeled_pool)} queries (target: {queries_to_get_this_round})")
 
-        # Lấy data cho queries đã chọn
-        # QUAN TRỌNG: query_idx là indices trong pool gốc (pool_for_oracle)
-        # Cần lấy data từ pool phù hợp với attacker_type (scaled cho keras/dual, raw cho lgb)
-        if attacker_type in ["keras", "dual"]:
-            # Attacker cần scaled data
-            X_query_s = pool_for_entropy[query_idx] if pool_for_entropy is not None else X_pool[query_idx]
-        else:
-            # Attacker cần raw data
-            X_query_s = X_pool[query_idx]
+        # Lấy data và labels cho queries đã chọn
+        # query_idx_in_unlabeled_pool là indices trong unlabeled pool gốc
+        # Cần map về indices trong pool_query_idx để lấy labels từ y_pool_query
         
-        # Tối ưu: Sử dụng labels đã query từ pool_query
-        # Tất cả queries đều được chọn từ pool_query (đã query oracle)
-        # query_idx là indices trong pool gốc (pool_for_entropy)
-        # pool_query_idx là indices trong pool gốc tương ứng với X_pool_query
-        # y_pool_query là labels từ oracle cho X_pool_query
-        # Cần tìm vị trí của query_idx trong pool_query_idx để lấy labels từ y_pool_query
+        # Tìm vị trí của query_idx_in_unlabeled_pool trong pool_query_idx
+        # pool_query_idx là indices trong unlabeled pool gốc (đã được pre-filter)
+        sorted_pool_query_idx = np.argsort(pool_query_idx)
+        sorted_pool_query_values = pool_query_idx[sorted_pool_query_idx]
+        positions = np.searchsorted(sorted_pool_query_values, query_idx_in_unlabeled_pool, side='left')
+        valid_mask = (positions < len(sorted_pool_query_values)) & (sorted_pool_query_values[positions] == query_idx_in_unlabeled_pool)
         
-        # Tối ưu: Sử dụng argsort + searchsorted để mapping nhanh hơn
-        # pool_query_idx có thể không được sắp xếp, nhưng các giá trị là unique
-        sorted_idx = np.argsort(pool_query_idx)
-        sorted_pool_query_idx = pool_query_idx[sorted_idx]
-        # Tìm vị trí của query_idx trong sorted_pool_query_idx
-        positions_in_sorted = np.searchsorted(sorted_pool_query_idx, query_idx, side='left')
-        # Kiểm tra xem query_idx có tồn tại trong pool_query_idx không
-        valid_mask = (positions_in_sorted < len(sorted_pool_query_idx)) & \
-                     (sorted_pool_query_idx[positions_in_sorted] == query_idx)
         if not np.all(valid_mask):
-            # Fallback nếu có query_idx không tồn tại trong pool_query_idx
-            # Điều này không nên xảy ra, nhưng để an toàn
-            raise ValueError(f"Một số query_idx không tồn tại trong pool_query_idx. "
-                           f"Điều này có thể do lỗi logic mapping.")
-        # Map về indices gốc trong pool_query_idx
-        query_positions = sorted_idx[positions_in_sorted]
-        y_query = y_pool_query[query_positions]
+            # Fallback: Query oracle trực tiếp cho các mẫu đã chọn
+            print(f"   ⚠️  Một số queries không có trong pool_query, sẽ query oracle trực tiếp...")
+            if oracle_model_type == "h5":
+                X_query_for_oracle = X_unlabeled_pool_s[query_idx_in_unlabeled_pool] if X_unlabeled_pool_s is not None else X_unlabeled_pool[query_idx_in_unlabeled_pool]
+            else:
+                X_query_for_oracle = X_unlabeled_pool[query_idx_in_unlabeled_pool]
+            y_query = oracle_client.predict(X_query_for_oracle)
+        else:
+            # Lấy labels từ y_pool_query (đã query oracle trong bước pre-filtering)
+            query_positions_in_pool_query = sorted_pool_query_idx[positions]
+            y_query = y_pool_query[query_positions_in_pool_query]
+        
+        # Lấy data phù hợp với attacker_type (scaled cho keras/dual/cnn, raw cho lgb/knn/xgb/tabnet)
+        if attacker_type in ["keras", "dual", "cnn"]:
+            # Attacker cần scaled data
+            X_query_s = X_unlabeled_pool_s[query_idx_in_unlabeled_pool] if X_unlabeled_pool_s is not None else X_unlabeled_pool[query_idx_in_unlabeled_pool]
+        else:
+            # Attacker cần raw data (lgb, knn)
+            X_query_s = X_unlabeled_pool[query_idx_in_unlabeled_pool]
 
         # Log class distribution để kiểm tra
         query_dist = dict(zip(*np.unique(y_query, return_counts=True)))
@@ -1351,14 +1743,20 @@ def run_extraction(
                         needed_samples = min_required_samples - minority_count
                         print(f"   🔄 Cần thêm {needed_samples} samples từ class {minority_class}...")
                         
-                        # Query oracle trên toàn bộ pool còn lại để tìm class thiểu số
-                        remaining_pool_size = X_pool_s.shape[0]
+                        # Query oracle trên toàn bộ unlabeled pool còn lại để tìm class thiểu số
+                        remaining_pool_size = X_unlabeled_pool.shape[0]
                         if remaining_pool_size > needed_samples:
                             # Tăng sample_size để tìm đủ class thiểu số (có thể pool chủ yếu là class đa số)
                             # Ước tính: nếu class thiểu số chiếm ~10%, cần query ~10x để tìm đủ
                             sample_size = min(needed_samples * 10, remaining_pool_size)
                             candidate_idx = rng.choice(remaining_pool_size, size=sample_size, replace=False)
-                            X_candidates = X_pool_s[candidate_idx]
+                            
+                            # Lấy data phù hợp với oracle type
+                            if oracle_model_type == "h5":
+                                X_candidates = X_unlabeled_pool_s[candidate_idx] if X_unlabeled_pool_s is not None else X_unlabeled_pool[candidate_idx]
+                            else:
+                                X_candidates = X_unlabeled_pool[candidate_idx]
+                            
                             y_candidates = oracle_client.predict(X_candidates)
                             
                             # Lọc chỉ lấy class thiểu số
@@ -1367,49 +1765,74 @@ def run_extraction(
                             
                             if minority_found >= needed_samples:
                                 # Lấy đủ samples từ class thiểu số
-                                minority_indices = candidate_idx[minority_mask][:needed_samples]
-                                X_additional = X_pool_s[minority_indices]
-                                y_additional = oracle_client.predict(X_additional)
+                                minority_candidate_idx = candidate_idx[minority_mask][:needed_samples]
+                                
+                                # Lấy data phù hợp với attacker type
+                                if attacker_type in ["keras", "dual", "cnn"]:
+                                    X_additional = X_unlabeled_pool_s[minority_candidate_idx] if X_unlabeled_pool_s is not None else X_unlabeled_pool[minority_candidate_idx]
+                                else:
+                                    X_additional = X_unlabeled_pool[minority_candidate_idx]
+                                
+                                y_additional = y_candidates[minority_mask][:needed_samples]
                                 
                                 X_query_s = np.vstack([X_query_s, X_additional])
                                 y_query = np.concatenate([y_query, y_additional])
-                                query_idx = np.concatenate([query_idx, minority_indices])
+                                # Thêm vào query_idx_in_unlabeled_pool
+                                query_idx_in_unlabeled_pool = np.concatenate([query_idx_in_unlabeled_pool, minority_candidate_idx])
                                 
                                 balanced_dist = dict(zip(*np.unique(y_query, return_counts=True)))
                                 print(f"   ✅ Đã cân bằng: {balanced_dist}")
                             else:
                                 print(f"   ⚠️  Chỉ tìm thấy {minority_found}/{needed_samples} samples từ class {minority_class}")
                                 if minority_found > 0:
-                                    minority_indices = candidate_idx[minority_mask]
-                                    X_additional = X_pool_s[minority_indices]
-                                    y_additional = oracle_client.predict(X_additional)
+                                    minority_candidate_idx = candidate_idx[minority_mask]
+                                    
+                                    # Lấy data phù hợp với attacker type
+                                    if attacker_type in ["keras", "dual", "cnn"]:
+                                        X_additional = X_unlabeled_pool_s[minority_candidate_idx] if X_unlabeled_pool_s is not None else X_unlabeled_pool[minority_candidate_idx]
+                                    else:
+                                        X_additional = X_unlabeled_pool[minority_candidate_idx]
+                                    
+                                    y_additional = y_candidates[minority_mask]
                                     X_query_s = np.vstack([X_query_s, X_additional])
                                     y_query = np.concatenate([y_query, y_additional])
-                                    query_idx = np.concatenate([query_idx, minority_indices])
+                                    query_idx_in_unlabeled_pool = np.concatenate([query_idx_in_unlabeled_pool, minority_candidate_idx])
                                     
                                     final_dist = dict(zip(*np.unique(y_query, return_counts=True)))
                                     final_ratio = min(final_dist.values()) / sum(final_dist.values())
                                     print(f"   ✅ Đã thêm {minority_found} samples, distribution: {final_dist} (minority ratio: {final_ratio*100:.1f}%)")
                                 else:
-                                    print(f"   ⚠️  Không tìm thấy samples từ class {minority_class} trong pool còn lại")
-                                    print(f"   💡 Có thể pool còn lại chủ yếu là class {majority_class}")
+                                    print(f"   ⚠️  Không tìm thấy samples từ class {minority_class} trong unlabeled pool còn lại")
+                                    print(f"   💡 Có thể unlabeled pool còn lại chủ yếu là class {majority_class}")
                 elif len(query_dist) == 1:
                     print(f"   ⚠️  CẢNH BÁO: Chỉ có 1 class trong queries! Model sẽ không học được phân biệt 2 classes")
                     # Thử lấy thêm một số random samples để đảm bảo có cả 2 classes
-                    remaining_pool_size = X_pool_s.shape[0]
+                    remaining_pool_size = X_unlabeled_pool.shape[0]
                     if remaining_pool_size > 0:
                         additional_samples = min(200, remaining_pool_size, query_batch // 2)  # Lấy thêm 50% hoặc tối đa 200
                         additional_idx = rng.choice(remaining_pool_size, size=additional_samples, replace=False)
-                        X_additional = X_pool_s[additional_idx]
-                        y_additional = oracle_client.predict(X_additional)
+                        
+                        # Lấy data phù hợp với oracle type
+                        if oracle_model_type == "h5":
+                            X_additional_for_query = X_unlabeled_pool_s[additional_idx] if X_unlabeled_pool_s is not None else X_unlabeled_pool[additional_idx]
+                        else:
+                            X_additional_for_query = X_unlabeled_pool[additional_idx]
+                        
+                        y_additional = oracle_client.predict(X_additional_for_query)
                         additional_dist = dict(zip(*np.unique(y_additional, return_counts=True)))
                         print(f"   🔄 Lấy thêm {additional_samples} random samples: {additional_dist}")
                         
                         # Thêm vào queries nếu có class mới
                         if len(additional_dist) > len(query_dist) or any(c not in query_dist for c in additional_dist):
+                            # Lấy data phù hợp với attacker type
+                            if attacker_type in ["keras", "dual", "cnn"]:
+                                X_additional = X_unlabeled_pool_s[additional_idx] if X_unlabeled_pool_s is not None else X_unlabeled_pool[additional_idx]
+                            else:
+                                X_additional = X_unlabeled_pool[additional_idx]
+                            
                             X_query_s = np.vstack([X_query_s, X_additional])
                             y_query = np.concatenate([y_query, y_additional])
-                            query_idx = np.concatenate([query_idx, additional_idx])
+                            query_idx_in_unlabeled_pool = np.concatenate([query_idx_in_unlabeled_pool, additional_idx])
                             print(f"   ✅ Đã thêm samples, distribution mới: {dict(zip(*np.unique(y_query, return_counts=True)))}")
 
         # QUAN TRỌNG: Đảm bảo số queries chính xác = queries_to_get_this_round
@@ -1423,47 +1846,70 @@ def run_extraction(
         max_queries_this_round = min(int(query_batch * 1.1), queries_remaining_needed) if queries_remaining_needed > 0 else int(query_batch * 1.1)
         min_queries_this_round = queries_to_get_this_round  # Ít nhất phải đạt mục tiêu cho round này
         
-        # QUAN TRỌNG: Nếu thiếu queries, BẮT BUỘC phải bổ sung từ pool
-        # Chỉ chấp nhận thiếu nếu pool thực sự cạn kiệt
+        # QUAN TRỌNG: Nếu thiếu queries, BẮT BUỘC phải bổ sung từ unlabeled pool
+        # Chỉ chấp nhận thiếu nếu unlabeled pool thực sự cạn kiệt
         if actual_queries < min_queries_this_round:
             # QUAN TRỌNG: Nếu có ít hơn mục tiêu, BẮT BUỘC phải bổ sung
             needed_samples = min_queries_this_round - actual_queries
             print(f"   ⚠️  CHỈ CÓ {actual_queries}/{min_queries_this_round} queries. CẦN BỔ SUNG {needed_samples} queries!")
             
-            remaining_pool_size = X_pool_s.shape[0]
+            remaining_pool_size = X_unlabeled_pool.shape[0]
             if remaining_pool_size >= needed_samples:
-                # Lấy thêm random samples từ pool còn lại
+                # Lấy thêm random samples từ unlabeled pool còn lại
                 additional_idx = rng.choice(remaining_pool_size, size=needed_samples, replace=False)
-                X_additional = X_pool_s[additional_idx]
-                y_additional = oracle_client.predict(X_additional)
+                
+                # Lấy data phù hợp với oracle type để query
+                if oracle_model_type == "h5":
+                    X_additional_for_query = X_unlabeled_pool_s[additional_idx] if X_unlabeled_pool_s is not None else X_unlabeled_pool[additional_idx]
+                else:
+                    X_additional_for_query = X_unlabeled_pool[additional_idx]
+                
+                y_additional = oracle_client.predict(X_additional_for_query)
+                
+                # Lấy data phù hợp với attacker type
+                if attacker_type in ["keras", "dual", "cnn"]:
+                    X_additional = X_unlabeled_pool_s[additional_idx] if X_unlabeled_pool_s is not None else X_unlabeled_pool[additional_idx]
+                else:
+                    X_additional = X_unlabeled_pool[additional_idx]
                 
                 X_query_s = np.vstack([X_query_s, X_additional])
                 y_query = np.concatenate([y_query, y_additional])
-                query_idx = np.concatenate([query_idx, additional_idx])
+                query_idx_in_unlabeled_pool = np.concatenate([query_idx_in_unlabeled_pool, additional_idx])
                 
-                print(f"   ✅ Đã bổ sung {needed_samples} queries từ pool. Total: {len(y_query)}")
+                print(f"   ✅ Đã bổ sung {needed_samples} queries từ unlabeled pool. Total: {len(y_query)}")
                 actual_queries = len(y_query)
             else:
-                # Pool không đủ, lấy tất cả còn lại
+                # Unlabeled pool không đủ, lấy tất cả còn lại
                 pool_exhausted_flag = True
                 if remaining_pool_size > 0:
-                    X_additional = X_pool_s
-                    y_additional = oracle_client.predict(X_additional)
+                    # Lấy data phù hợp với oracle type để query
+                    if oracle_model_type == "h5":
+                        X_additional_for_query = X_unlabeled_pool_s if X_unlabeled_pool_s is not None else X_unlabeled_pool
+                    else:
+                        X_additional_for_query = X_unlabeled_pool
+                    
+                    y_additional = oracle_client.predict(X_additional_for_query)
+                    
+                    # Lấy data phù hợp với attacker type
+                    if attacker_type in ["keras", "dual", "cnn"]:
+                        X_additional = X_unlabeled_pool_s if X_unlabeled_pool_s is not None else X_unlabeled_pool
+                    else:
+                        X_additional = X_unlabeled_pool
                     
                     X_query_s = np.vstack([X_query_s, X_additional])
                     y_query = np.concatenate([y_query, y_additional])
-                    all_indices = np.arange(X_pool_s.shape[0])
-                    query_idx = np.concatenate([query_idx, all_indices])
+                    all_indices = np.arange(X_unlabeled_pool.shape[0])
+                    query_idx_in_unlabeled_pool = np.concatenate([query_idx_in_unlabeled_pool, all_indices])
                     
                     actual_queries = len(y_query)
-                    print(f"   ⚠️  Pool còn lại chỉ có {remaining_pool_size} samples. Đã lấy tất cả.")
+                    print(f"   ⚠️  Unlabeled pool còn lại chỉ có {remaining_pool_size} samples. Đã lấy tất cả.")
                     print(f"   📊 Total queries trong round này: {actual_queries} (mục tiêu: {min_queries_this_round})")
                     if actual_queries < min_queries_this_round:
                         missing = min_queries_this_round - actual_queries
-                        print(f"   ❌ VẪN THIẾU {missing} queries do pool cạn kiệt!")
+                        print(f"   ❌ VẪN THIẾU {missing} queries do unlabeled pool cạn kiệt!")
                 else:
                     pool_exhausted_flag = True
-                    print(f"   ❌ LỖI NGHIÊM TRỌNG: Pool đã cạn kiệt! Chỉ có {actual_queries} queries thay vì {min_queries_this_round}")
+                    print(f"   ❌ LỖI NGHIÊM TRỌNG: Unlabeled pool đã cạn kiệt! Chỉ có {actual_queries} queries thay vì {min_queries_this_round}")
                     print(f"   ❌ Thiếu {min_queries_this_round - actual_queries} queries! Điều này sẽ ảnh hưởng nghiêm trọng đến hiệu suất!")
         
         # Giới hạn tối đa: không vượt quá max_queries_this_round (110% của query_batch hoặc queries còn cần)
@@ -1472,7 +1918,7 @@ def run_extraction(
             print(f"   🔄 Giới hạn lại về {max_queries_this_round} queries.")
             X_query_s = X_query_s[:max_queries_this_round]
             y_query = y_query[:max_queries_this_round]
-            query_idx = query_idx[:max_queries_this_round]
+            query_idx_in_unlabeled_pool = query_idx_in_unlabeled_pool[:max_queries_this_round]
             actual_queries = max_queries_this_round
             final_dist = dict(zip(*np.unique(y_query, return_counts=True)))
             print(f"   📊 Query distribution sau khi giới hạn: {final_dist}")
@@ -1494,36 +1940,32 @@ def run_extraction(
         print(f"   {status} Round {query_round}: Đã chọn {queries_this_round} queries (mục tiêu: {min_queries_this_round}, tối đa: {max_queries_this_round})")
         print(f"   📊 Tổng queries tích lũy: {total_queries_accumulated:,}/{total_queries_target:,} ({total_queries_accumulated/total_queries_target*100:.1f}%)")
         
-        # QUAN TRỌNG: Verify queries_this_round đạt mục tiêu trước khi xóa từ pool
-        # Nếu thiếu queries và pool vẫn còn, phải cảnh báo nghiêm trọng
+        # QUAN TRỌNG: Verify queries_this_round đạt mục tiêu trước khi xóa từ unlabeled pool
+        # Nếu thiếu queries và unlabeled pool vẫn còn, phải cảnh báo nghiêm trọng
         if queries_this_round < min_queries_this_round:
             missing = min_queries_this_round - queries_this_round
-            pool_remaining_before_delete = X_pool.shape[0]
+            pool_remaining_before_delete = X_unlabeled_pool.shape[0]
             print(f"\n   ❌ LỖI NGHIÊM TRỌNG: Round {query_round} chỉ có {queries_this_round} queries thay vì {min_queries_this_round}!")
             print(f"   ❌ Thiếu {missing} queries! Điều này sẽ ảnh hưởng nghiêm trọng đến hiệu suất!")
-            print(f"   💡 Pool còn lại trước khi xóa: {pool_remaining_before_delete:,} samples")
-            print(f"   💡 Kiểm tra logic bổ sung queries hoặc pool size ban đầu!")
-            # KHÔNG raise error vì có thể pool thực sự cạn kiệt, nhưng cảnh báo rõ ràng
+            print(f"   💡 Unlabeled pool còn lại trước khi xóa: {pool_remaining_before_delete:,} samples")
+            print(f"   💡 Kiểm tra logic bổ sung queries hoặc unlabeled pool size ban đầu!")
+            # KHÔNG raise error vì có thể unlabeled pool thực sự cạn kiệt, nhưng cảnh báo rõ ràng
         
+        # QUAN TRỌNG: Thêm vào labeled pool (pool tích lũy dần)
         labeled_X = np.vstack([labeled_X, X_query_s])
         labeled_y = np.concatenate([labeled_y, y_query])
 
-        # Xóa từ pool (đảm bảo query_idx unique)
-        query_idx_unique = np.unique(query_idx)
-        X_pool = np.delete(X_pool, query_idx_unique, axis=0)
-        # QUAN TRỌNG: Cũng xóa labels tương ứng từ y_pool_gt (thief dataset labels)
-        y_pool_gt = np.delete(y_pool_gt, query_idx_unique, axis=0)
+        # Xóa từ unlabeled pool (đảm bảo query_idx_in_unlabeled_pool unique)
+        query_idx_unique = np.unique(query_idx_in_unlabeled_pool)
+        X_unlabeled_pool = np.delete(X_unlabeled_pool, query_idx_unique, axis=0)
+        # QUAN TRỌNG: Cũng xóa labels tương ứng từ y_unlabeled_pool_gt (thief dataset labels)
+        y_unlabeled_pool_gt = np.delete(y_unlabeled_pool_gt, query_idx_unique, axis=0)
         
-        if attacker_type in ["keras", "dual"]:
-            # X_pool_s có sẵn cho Keras và dualDNN
-            X_pool_s = np.delete(X_pool_s, query_idx_unique, axis=0)
-            # Lưu ý: pool_labels_for_entropy được tạo lại mỗi round từ y_pool_query,
-            # không cần xóa vì nó chỉ là biến tạm thời trong mỗi round
-        else:
-            # Với LightGBM, X_pool_s = X_pool
-            X_pool_s = X_pool
+        if X_unlabeled_pool_s is not None:
+            # X_unlabeled_pool_s có sẵn cho Keras, dualDNN, và CNN
+            X_unlabeled_pool_s = np.delete(X_unlabeled_pool_s, query_idx_unique, axis=0)
         
-        print(f"   📊 Pool còn lại: {X_pool.shape[0]:,} samples")
+        print(f"   📊 Unlabeled pool còn lại: {X_unlabeled_pool.shape[0]:,} samples")
 
         # QUAN TRỌNG: Re-train từ đầu trên toàn bộ dữ liệu tích lũy
         # Theo nghiên cứu: Huấn luyện lại từ đầu giúp model học lại phân phối tổng thể,
@@ -1535,12 +1977,37 @@ def run_extraction(
             # Sử dụng hyperparameters tối ưu để khớp với target model
             attacker.train_model(labeled_X, labeled_y, X_val, y_val, boosting_rounds=2000, early_stopping=100)
         elif attacker_type == "dual":
-            # Sử dụng feature_dim thực tế từ dataset, không phải từ target model
-            attacker = KerasDualAttacker(early_stopping=30, seed=seed, input_shape=(feature_dim,))
+            # QUAN TRỌNG: Sử dụng surrogate_feature_dim (từ target model), không phải dataset attack
+            attacker = KerasDualAttacker(early_stopping=30, seed=seed, input_shape=(surrogate_feature_dim,))
             # DualDNN train với (X, y, y_true) - y_true là oracle labels
             attacker.train_model(labeled_X, labeled_y, labeled_y, X_val_s, y_val, y_val, num_epochs=num_epochs)
+        elif attacker_type == "cnn":
+            # QUAN TRỌNG: Sử dụng surrogate_feature_dim (từ target model), không phải dataset attack
+            attacker = CNNAttacker(early_stopping=30, seed=seed, input_shape=(surrogate_feature_dim, 1))
+            attacker.train_model(labeled_X, labeled_y, X_val_s, y_val, num_epochs=num_epochs)
+        elif attacker_type == "knn":
+            attacker = KNNAttacker(seed=seed)
+            # KNN dùng raw data (labeled_X thay vì scaled)
+            attacker.train_model(labeled_X, labeled_y, X_val, y_val)
+        elif attacker_type == "xgb":
+            attacker = XGBoostAttacker(seed=seed)
+            # XGBoost dùng raw data (labeled_X thay vì scaled)
+            attacker.train_model(labeled_X, labeled_y, X_val, y_val, boosting_rounds=200, early_stopping=20)
+        elif attacker_type == "tabnet":
+            attacker = TabNetAttacker(seed=seed)
+            # TabNet dùng raw data (labeled_X thay vì scaled)
+            attacker.train_model(
+                labeled_X,
+                labeled_y,
+                X_val,
+                y_val,
+                max_epochs=100,
+                patience=100000,  # effectively disable early stopping
+                batch_size=2048,
+            )
         else:
-            attacker = KerasAttacker(early_stopping=30, seed=seed, input_shape=(feature_dim,))
+            # QUAN TRỌNG: Sử dụng surrogate_feature_dim (từ target model), không phải dataset attack
+            attacker = KerasAttacker(early_stopping=30, seed=seed, input_shape=(surrogate_feature_dim,))
             attacker.train_model(labeled_X, labeled_y, X_val_s, y_val, num_epochs=num_epochs)
 
         evaluate(attacker, round_id=query_round, total_labels=labeled_X.shape[0])
@@ -1558,8 +2025,13 @@ def run_extraction(
     print(f"\n{'='*80}")
     print(f"📊 TỔNG KẾT QUERIES:")
     print(f"{'='*80}")
-    print(f"   Queries dự kiến: {total_queries_target:,} ({query_batch:,} queries/round × {num_rounds} rounds)")
-    print(f"   Queries thực tế: {final_total_queries:,}")
+    AL_queries_actual = final_total_queries - seed_size - val_size
+    print(f"   Seed queries: {seed_size:,} (đã query)")
+    print(f"   Val queries: {val_size:,} (đã query)")
+    print(f"   AL queries dự kiến: {AL_queries_target:,} ({query_batch:,} queries/round × {num_rounds} rounds)")
+    print(f"   AL queries thực tế: {AL_queries_actual:,}")
+    print(f"   Total query budget dự kiến: {total_queries_target:,} (seed + val + AL)")
+    print(f"   Total queries thực tế: {final_total_queries:,}")
     print(f"   Chênh lệch: {diff:+,} queries ({diff_percent:+.2f}%)")
     print(f"   Ngưỡng chấp nhận: {min_queries_acceptable:,} - {max_queries_acceptable:,} (90% - 110%)")
     
@@ -1593,8 +2065,14 @@ def run_extraction(
     # Lấy extension phù hợp với model type
     if attacker_type == "lgb":
         surrogate_model_path = f"{surrogate_path}.txt"
+    elif attacker_type == "knn":
+        surrogate_model_path = f"{surrogate_path}.pkl"
+    elif attacker_type == "xgb":
+        surrogate_model_path = f"{surrogate_path}.json"
+    elif attacker_type == "tabnet":
+        surrogate_model_path = f"{surrogate_path}.zip"
     else:
-        # Keras và dualDNN đều dùng .h5
+        # Keras, dualDNN, và CNN đều dùng .h5
         surrogate_model_path = f"{surrogate_path}.h5"
 
     joblib_path = output_dir / "robust_scaler.joblib"
@@ -1611,6 +2089,31 @@ def run_extraction(
     metrics_csv = output_dir / "extraction_metrics.csv"
     df_metrics.to_csv(metrics_csv, index=False)
 
+    #region agent log
+    try:
+        import json as _json, time as _time
+        from pathlib import Path as _Path
+        _log_payload = {
+            "sessionId": "debug-session",
+            "runId": "pre-fix",
+            "hypothesisId": "H2",
+            "location": "extract_final_model.py:metrics_csv_write",
+            "message": "metrics_history final snapshot before summary",
+            "data": {
+                "output_dir": str(output_dir),
+                "metrics_len": len(metrics_history),
+                "final_metrics": metrics_history[-1] if metrics_history else None,
+                "metrics_csv": str(metrics_csv),
+                "metrics_csv_exists_before": _Path(metrics_csv).exists(),
+            },
+            "timestamp": int(_time.time() * 1000),
+        }
+        with open("/home/hytong/Documents/model_extraction_malware/.cursor/debug.log", "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_log_payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    #endregion
+
     summary = {
         "oracle_source": oracle_source,
         "model_file_name": model_file_name,
@@ -1621,6 +2124,10 @@ def run_extraction(
         "scaler_path": str(joblib_path) if joblib_path else None,
         "metrics_csv": str(metrics_csv),
         "metrics": metrics_history,
+        "seed_size": int(seed_size),
+        "val_size": int(val_size),
+        "query_batch": int(query_batch),
+        "num_rounds": int(num_rounds),
         "total_queries_target": int(total_queries_target),
         "total_queries_actual": int(final_total_queries),
         "query_gap_reason": query_gap_reason,

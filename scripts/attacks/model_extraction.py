@@ -19,8 +19,8 @@ import pandas as pd
 from datetime import datetime
 from mlflow import mlflow, log_param
 
-from src.targets import LGBTarget, FileBasedTarget, TorchTarget
-from src.attackers import LGBAttacker, KerasAttacker, KerasDualAttacker, SVMAttacker
+from src.targets import LGBTarget, FileBasedTarget, TorchTarget, XGBoostTarget, DualFFNNTarget, TabNetTarget
+from src.attackers import LGBAttacker, KerasAttacker, KerasDualAttacker, SVMAttacker, XGBoostAttacker, TabNetAttacker
 from src.datasets import get_ember_data, get_av_data, get_sorel_data
 
 # MLFLOW: Set to False if not supported
@@ -38,10 +38,10 @@ parser.add_argument("-m", "--method", type=str, required=False, default="entropy
 parser.add_argument("-n", "--num_queries", type=int, default="10", required=False, help="Number of query rounds")
 parser.add_argument("-b", "--budget", type=int, default="25000", required=False, help="Total query budget")
 parser.add_argument("-e", "--num_epochs", type=int, default="1", required=False, help="Number of training epochs per round")
-parser.add_argument("-t", "--type", type=str, default="LGB", required=False, choices=["DNN", "dualDNN", "LGB", "SVM"], help="Type of surrogate model")
+parser.add_argument("-t", "--type", type=str, default="LGB", required=False, choices=["DNN", "dualDNN", "LGB", "SVM", "XGB", "TabNet"], help="Type of surrogate model")
 parser.add_argument("-l", "--log_dir", type=str, default="./logs", required=False, help="Where to store the log files with the results")
 parser.add_argument("-tg", "--target_model", type=str, default="ember", required=False, 
-    choices=["ember", "sorel-FCNN", "sorel-LGB", "AV1", "AV2", "AV3", "AV4"], help="Target model")
+    choices=["ember", "sorel-FCNN", "sorel-LGB", "AV1", "AV2", "AV3", "AV4", "xgboost-ember", "dualffnn-ember", "tabnet-ember"], help="Target model")
 parser.add_argument("-f", "--family", type=str, required=False, default="top10families", 
     choices=["top10families", "Adload", "WannaCry", "Pykse", "Azorult", "Bancteian", "Emotet", "Swisyn", "Vobfus"],
     help="Select top10 families or one specific malware family")
@@ -89,6 +89,8 @@ rg = np.random.default_rng(seed)
 
 if model_type in ['DNN', 'SVM', 'dualDNN']:
     scaling_needed = True
+elif model_type in ['XGB', 'TabNet', 'LGB']:
+    scaling_needed = False  # Tree-based models và TabNet không cần scaling
 else:
     scaling_needed = False
 
@@ -122,6 +124,18 @@ elif target == "sorel-FCNN":
     model_dir = f'/data/mari/sorel-models/FFNN/seed4/'
     checkpoint_file = os.path.join(model_dir, 'epoch_10.pt')
     target_model = TorchTarget(checkpoint_file, 0.5, target)
+elif target == "xgboost-ember":
+    model_path = os.path.join(data_dir, 'artifacts/targets/xgboost_ember.json')
+    norm_stats_path = os.path.join(data_dir, 'artifacts/targets/xgboost_normalization_stats.npz')
+    target_model = XGBoostTarget(model_path, normalization_stats_path=norm_stats_path, thresh=0.5, name=target)
+elif target == "dualffnn-ember":
+    model_path = os.path.join(data_dir, 'artifacts/targets/dualffnn_ember_full.pt')
+    norm_stats_path = os.path.join(data_dir, 'artifacts/targets/dualffnn_normalization_stats.npz')
+    target_model = DualFFNNTarget(model_path, normalization_stats_path=norm_stats_path, thresh=0.5, name=target)
+elif target == "tabnet-ember":
+    model_path = os.path.join(data_dir, 'artifacts/targets/tabnet_ember.zip')
+    norm_stats_path = os.path.join(data_dir, 'artifacts/targets/tabnet_normalization_stats.npz')
+    target_model = TabNetTarget(model_path, normalization_stats_path=norm_stats_path, thresh=0.5, name=target)
 elif isAV:
     target_model = FileBasedTarget(None, name=target, labels=y_train_target)
 else:
@@ -209,6 +223,13 @@ elif model_type == 'dualDNN':
 elif model_type == "SVM":
     sub_model = SVMAttacker(seed=seed, max_iter=1000)
     sub_model.train_model(X_seed, y_seed)
+elif model_type == "XGB":
+    sub_model = XGBoostAttacker(seed=seed)
+    sub_model.train_model(X_seed, y_seed, X_val, y_val, boosting_rounds=200, early_stopping=20)
+elif model_type == "TabNet":
+    # TabNet tự xử lý device detection
+    sub_model = TabNetAttacker(seed=seed)
+    sub_model.train_model(X_seed, y_seed, X_val, y_val, max_epochs=30, patience=3, batch_size=1024)
 else:
     sub_model = LGBAttacker(seed=42)
     sub_model.train_model(X_seed, y_seed, X_val, y_val, boosting_rounds=100, early_stopping=15)
@@ -314,6 +335,12 @@ for idx in range(num_queries):
     elif model_type == 'SVM':
         sub_model = SVMAttacker(seed=seed, max_iter=10000)
         sub_model.train_model(X_seed, y_seed)
+    elif model_type == "XGB":
+        sub_model = XGBoostAttacker(seed=seed)
+        sub_model.train_model(X_seed, y_seed, X_val, y_val, boosting_rounds=200, early_stopping=20)
+    elif model_type == "TabNet":
+        sub_model = TabNetAttacker(seed=seed)
+        sub_model.train_model(X_seed, y_seed, X_val, y_val, max_epochs=30, patience=3, batch_size=1024)
     else:
         sub_model = LGBAttacker(seed=42)
         sub_model.train_model(X_seed, y_seed, X_val, y_val, boosting_rounds=1000, early_stopping=60)

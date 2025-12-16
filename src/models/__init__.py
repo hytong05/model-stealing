@@ -1,9 +1,9 @@
 """
 Models module - Contains neural network model definitions
 """
-from .dnn import create_dnn, create_dnn2
+from .dnn import create_dnn, create_dnn2, create_dnn2_deeper, create_dnn2_narrower, create_cnn
 
-__all__ = ["create_dnn", "create_dnn2"]
+__all__ = ["create_dnn", "create_dnn2", "create_dnn2_deeper", "create_dnn2_narrower", "create_cnn"]
 
 
 def get_penetwork(*args, **kwargs):

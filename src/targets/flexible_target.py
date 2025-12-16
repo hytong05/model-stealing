@@ -209,6 +209,21 @@ class FlexibleKerasTarget:
         from tensorflow.keras import Sequential
         from tensorflow.keras.layers import BatchNormalization, Dense, Dropout
         
+        # Nếu detect được conv layers, thử build CNN model trước
+        if architecture_info["has_conv"]:
+            # Thử build CNN model từ common architectures
+            common_archs = self._get_common_architectures()
+            if 'CNN' in common_archs:
+                try:
+                    cnn_model = common_archs['CNN']()
+                    # Thử load weights với skip_mismatch=True
+                    cnn_model.load_weights(self.model_endpoint, by_name=True, skip_mismatch=True)
+                    print(f"✅ Successfully built CNN model from weights ({len(cnn_model.layers)} layers)")
+                    return cnn_model
+                except Exception as e:
+                    print(f"⚠️  Cannot build CNN model: {type(e).__name__}: {str(e)[:100]}")
+                    # Fallback về build DNN nếu có dense layers
+        
         if not architecture_info["has_dense"] or not architecture_info["dense_layers"]:
             return None
         
@@ -327,25 +342,28 @@ class FlexibleKerasTarget:
         
         architectures = {}
         
-        # Architecture 1: CNN (như trong final_model.ipynb)
+        # Architecture 1: CNN (như trong CNN.ipynb)
         def build_cnn():
             return Sequential([
-                Conv1D(64, 5, strides=2, padding='same', 
+                # Layer 1
+                Conv1D(32, 5, strides=2, padding='same', 
                       input_shape=(self.feature_dim, 1), activation='relu'),
                 BatchNormalization(),
                 MaxPooling1D(pool_size=2),
                 Dropout(0.3),
-                Conv1D(64, 3, padding='same', activation='relu'),
-                BatchNormalization(),
+                # Layer 2-3
                 Conv1D(32, 3, padding='same', activation='relu'),
+                BatchNormalization(),
+                Conv1D(16, 3, padding='same', activation='relu'),
                 BatchNormalization(),
                 MaxPooling1D(pool_size=2),
                 Dropout(0.4),
                 Flatten(),
-                Dense(256, activation='relu', kernel_regularizer=l2(0.01)),
+                # Dense layers
+                Dense(128, activation='relu', kernel_regularizer=l2(0.01)),
                 BatchNormalization(),
                 Dropout(0.5),
-                Dense(128, activation='relu', kernel_regularizer=l2(0.01)),
+                Dense(64, activation='relu', kernel_regularizer=l2(0.01)),
                 BatchNormalization(),
                 Dropout(0.5),
                 Dense(2, activation='softmax', dtype='float32'),
@@ -600,6 +618,7 @@ class FlexibleKerasTarget:
         """
         Normalize features giống như trong notebook:
         X = (X - feature_means) / feature_stds
+        Sau đó clip về [-10, 10] để tránh outliers (giống notebook CNN.ipynb)
         """
         if not self.use_normalization:
             return X
@@ -629,6 +648,11 @@ class FlexibleKerasTarget:
         # Normalize
         features_normalized = (X_aligned - feature_means_used) / feature_stds_used
         features_normalized = np.nan_to_num(features_normalized, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        # QUAN TRỌNG: Clip về [-10, 10] giống như trong notebook CNN.ipynb
+        # Model được train với dữ liệu đã clip, nên phải clip ở đây để đảm bảo consistency
+        CLIP_VALUE = 10.0  # Giống notebook CNN.ipynb
+        features_normalized = np.clip(features_normalized, -CLIP_VALUE, CLIP_VALUE)
         
         return features_normalized
     
@@ -962,6 +986,229 @@ class FlexibleLGBTarget:
         
         Args:
             X: Input features (n_samples, n_features) hoặc dict với feature names
+            
+        Returns:
+            labels: Binary labels (n_samples,)
+        """
+        probs = self.predict_proba(X)
+        return (probs >= self.model_threshold).astype(int)
+
+
+class FlexibleSKLearnTarget:
+    """
+    Wrapper linh hoạt để load sklearn model (.pkl, joblib format) với normalization stats.
+    
+    Hỗ trợ:
+    - Load model từ file .pkl (joblib format)
+    - Load normalization statistics từ file .npz (optional)
+    - Normalize features trước khi predict (nếu có stats)
+    - Xử lý feature alignment nếu cần
+    
+    Xử lý feature dimension mismatch: Tự động cắt bỏ đặc trưng thừa nếu input 
+    có nhiều đặc trưng hơn model yêu cầu (Interface Compliance).
+    """
+    
+    def __init__(
+        self, 
+        model_path, 
+        normalization_stats_path=None,
+        threshold=0.5, 
+        name="flexible-sklearn-target",
+        feature_dim=None
+    ):
+        """
+        Args:
+            model_path: Đường dẫn tới file model .pkl (joblib format)
+            normalization_stats_path: Đường dẫn tới file .npz chứa normalization stats (optional)
+            threshold: Threshold để chuyển probabilities thành binary labels
+            name: Tên của target model
+            feature_dim: Số đặc trưng của attacker dataset. Nếu None, sẽ lấy từ model.
+        """
+        self.model_endpoint = model_path
+        self.model_threshold = threshold
+        self.name = name
+        self.feature_dim = feature_dim
+        
+        # Load model
+        self.model = self._load_model()
+        
+        # Lấy số đặc trưng yêu cầu từ model
+        try:
+            self._required_feature_dim = self.model.n_features_in_
+        except AttributeError:
+            # Nếu không có n_features_in_, thử lấy từ training data
+            # Với KNN, có thể lấy từ _fit_X
+            if hasattr(self.model, '_fit_X'):
+                self._required_feature_dim = self.model._fit_X.shape[1]
+            else:
+                # Fallback: dùng feature_dim được cung cấp hoặc 2381
+                self._required_feature_dim = feature_dim if feature_dim is not None else 2381
+                print(f"⚠️  Không thể detect số features từ model, dùng: {self._required_feature_dim}")
+        
+        # Nếu feature_dim không được cung cấp, dùng từ model
+        if self.feature_dim is None:
+            self.feature_dim = self._required_feature_dim
+        
+        # Load normalization stats (nếu có)
+        self.feature_means = None
+        self.feature_stds = None
+        self.feature_cols = None
+        self.use_normalization = False
+        
+        if normalization_stats_path is not None:
+            self._load_normalization_stats(normalization_stats_path)
+    
+    def _load_model(self):
+        """Load sklearn model từ file joblib"""
+        try:
+            import joblib
+            model = joblib.load(self.model_endpoint)
+            print(f"✅ Loaded sklearn model from {self.model_endpoint}")
+            print(f"   Model type: {type(model).__name__}")
+            # Kiểm tra xem có phải KNN không
+            if hasattr(model, 'n_neighbors'):
+                print(f"   KNN - n_neighbors: {model.n_neighbors}")
+            return model
+        except Exception as e:
+            raise ValueError(
+                f"Cannot load sklearn model from {self.model_endpoint}. "
+                f"Error: {type(e).__name__}: {str(e)}"
+            )
+    
+    def _load_normalization_stats(self, stats_path):
+        """Load normalization statistics từ file .npz"""
+        try:
+            stats = np.load(stats_path, allow_pickle=True)
+            
+            if 'feature_means' in stats:
+                self.feature_means = stats['feature_means']
+            else:
+                raise ValueError(f"File {stats_path} không chứa 'feature_means'")
+            
+            if 'feature_stds' in stats:
+                self.feature_stds = stats['feature_stds']
+            else:
+                raise ValueError(f"File {stats_path} không chứa 'feature_stds'")
+            
+            if 'feature_cols' in stats:
+                self.feature_cols = stats['feature_cols'].tolist() if hasattr(stats['feature_cols'], 'tolist') else stats['feature_cols']
+            else:
+                self.feature_cols = None
+            
+            self.use_normalization = True
+            print(f"✅ Loaded normalization stats from {stats_path}")
+            print(f"   Feature means shape: {self.feature_means.shape}")
+            print(f"   Feature stds shape: {self.feature_stds.shape}")
+            
+            # Kiểm tra compatibility
+            if self.feature_cols is not None:
+                print(f"   Feature columns: {len(self.feature_cols)}")
+                if len(self.feature_cols) != self._required_feature_dim:
+                    print(f"   ⚠️  Warning: feature_cols ({len(self.feature_cols)}) != model features ({self._required_feature_dim})")
+        except Exception as e:
+            print(f"⚠️  Warning: Cannot load normalization stats from {stats_path}: {type(e).__name__}: {str(e)}")
+            print(f"   Will use features without normalization")
+            self.use_normalization = False
+    
+    def get_required_feature_dim(self):
+        """Trả về số đặc trưng mà sklearn model yêu cầu"""
+        return self._required_feature_dim
+    
+    def _align_features(self, X):
+        """
+        Đồng bộ hóa số chiều đặc trưng của input với yêu cầu của target model.
+        Nếu X có nhiều đặc trưng hơn, cắt bỏ các đặc trưng thừa ở cuối.
+        Nếu X có ít đặc trưng hơn, raise ValueError.
+        """
+        X = np.asarray(X, dtype=np.float32)
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
+        
+        actual_dim = X.shape[1]
+        
+        if actual_dim == self._required_feature_dim:
+            return X
+        elif actual_dim > self._required_feature_dim:
+            # Cắt bỏ đặc trưng thừa ở cuối
+            print(f"⚠️  Input has {actual_dim} features, target model requires {self._required_feature_dim}. "
+                  f"Trimming {actual_dim - self._required_feature_dim} features.")
+            return X[:, :self._required_feature_dim]
+        else:
+            # Không đủ đặc trưng - raise error
+            raise ValueError(
+                f"Input has {actual_dim} features, but target model requires {self._required_feature_dim}. "
+                f"Cannot pad features - please provide correct feature set."
+            )
+    
+    def _normalize_features(self, X):
+        """
+        Normalize features nếu có stats.
+        """
+        if not self.use_normalization:
+            return X
+        
+        # Align features trước khi normalize
+        X_aligned = self._align_features(X)
+        
+        # Kiểm tra xem stats có khớp với model requirements không
+        stats_feature_dim = self.feature_means.shape[0]
+        
+        if stats_feature_dim == self._required_feature_dim:
+            # Stats khớp - normalize bình thường
+            feature_means_used = self.feature_means
+            feature_stds_used = self.feature_stds
+        else:
+            # Stats không khớp - chỉ dùng số features model cần
+            if stats_feature_dim >= self._required_feature_dim:
+                feature_means_used = self.feature_means[:self._required_feature_dim]
+                feature_stds_used = self.feature_stds[:self._required_feature_dim]
+            else:
+                # Stats ít hơn model cần - không normalize
+                print(f"⚠️  Stats có ít features hơn model cần - bỏ qua normalization")
+                return X_aligned
+        
+        # Normalize
+        features_normalized = (X_aligned - feature_means_used) / feature_stds_used
+        features_normalized = np.nan_to_num(features_normalized, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        return features_normalized
+    
+    def predict_proba(self, X):
+        """
+        Predict probabilities.
+        
+        Args:
+            X: Input features (n_samples, n_features)
+            
+        Returns:
+            probabilities: Array of probabilities (n_samples,)
+        """
+        # Normalize và align features
+        if self.use_normalization:
+            features_array = self._normalize_features(X)
+        else:
+            features_array = self._align_features(X)
+        
+        # Predict
+        prediction_prob = self.model.predict_proba(features_array)
+        
+        # Đảm bảo output là 1D array (probability của class 1)
+        if prediction_prob.ndim > 1:
+            if prediction_prob.shape[1] == 2:
+                # Binary classification: lấy class 1
+                prediction_prob = prediction_prob[:, 1]
+            else:
+                # Multi-class: lấy class cuối (hoặc có thể điều chỉnh)
+                prediction_prob = prediction_prob[:, -1]
+        
+        return prediction_prob
+    
+    def __call__(self, X):
+        """
+        Predict binary labels.
+        
+        Args:
+            X: Input features (n_samples, n_features)
             
         Returns:
             labels: Binary labels (n_samples,)
