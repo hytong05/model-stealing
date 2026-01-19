@@ -32,34 +32,62 @@ MIR provides a comprehensive framework for extracting surrogate models from blac
 
 ### Prerequisites
 
-- Python 3.8+
-- Virtual environment support
+- Python 3.8 or higher
+- pip (usually included with Python)
+- Git (for installing ember package)
 
-### Installation
+### Quick Setup (Recommended)
 
-1. **Clone the repository**:
-   ```bash
-   git clone git@github.com:hytong05/model-stealing.git
-   cd model-stealing
-   ```
+Run the automated setup script:
 
-2. **Create and activate virtual environment**:
-   ```bash
-   ./setup_venv.sh
-   source venv/bin/activate
-   ```
+```bash
+./setup_venv.sh
+```
 
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+This script will:
+1. Check Python version
+2. Create a virtual environment in `venv/`
+3. Install all dependencies from `requirements.txt`
+4. Install the `ember` package from GitHub (not available on PyPI)
 
-   **Note**: The `ember` package needs to be installed separately:
-   ```bash
-   pip install git+https://github.com/endgameinc/ember.git
-   ```
+### Manual Setup
 
-For detailed setup instructions, see [docs/SETUP.md](docs/SETUP.md).
+**Step 1: Create Virtual Environment**
+```bash
+python3 -m venv venv
+```
+
+**Step 2: Activate Virtual Environment**
+
+On Linux/Mac:
+```bash
+source venv/bin/activate
+```
+
+On Windows:
+```bash
+venv\Scripts\activate
+```
+
+**Step 3: Install Dependencies**
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Install ember package from GitHub (not available on PyPI)
+pip install git+https://github.com/endgameinc/ember.git
+```
+
+### Troubleshooting
+
+- **Import Errors**: Ensure virtual environment is activated and you're in the project root directory
+- **TensorFlow Issues**: Try `pip install tensorflow --upgrade`
+- **PyTorch Issues**: May require separate installation. See: https://pytorch.org/get-started/locally/
+- **Ember Package**: If installation fails, try:
+  ```bash
+  pip install tqdm lief
+  pip install git+https://github.com/endgameinc/ember.git
+  ```
 
 ## Project Structure
 
@@ -67,7 +95,7 @@ For detailed setup instructions, see [docs/SETUP.md](docs/SETUP.md).
 model-stealing/
 ├── src/                           # Core library
 │   ├── attackers/                 # Attack implementations
-│   ├── targets/                   # Target model interfaces
+│   ├── targets/                    # Target model interfaces
 │   ├── sampling/                  # Active learning strategies
 │   ├── models/                    # Surrogate model architectures
 │   ├── datasets/                  # Dataset loaders
@@ -88,10 +116,6 @@ model-stealing/
 ├── output/                        # Experiment outputs (not tracked)
 ├── storage/                       # Training checkpoints (not tracked)
 ├── logs/                          # Log files (not tracked)
-├── docs/                          # Documentation
-│   ├── SETUP.md                   # Detailed setup guide
-│   ├── ORACLE_USAGE.md            # Oracle query documentation
-│   └── reports/                   # Generated reports
 ├── notebooks/                     # Jupyter notebooks
 ├── examples/                      # Example scripts
 ├── requirements.txt               # Python dependencies
@@ -102,7 +126,7 @@ model-stealing/
 
 ### Basic Model Extraction
 
-The main extraction script is `scripts/attacks/model_extraction.py`. It supports various parameters for configuring the extraction attack:
+The main extraction script is `scripts/attacks/model_extraction.py`:
 
 ```bash
 python scripts/attacks/model_extraction.py \
@@ -150,40 +174,49 @@ python scripts/attacks/model_extraction.py \
   --seed 42
 ```
 
-This command will:
-1. Extract a LightGBM surrogate model from the SOREL-FCNN target
-2. Use medoids clustering for query selection
-3. Perform 10 query rounds with a total budget of 2500 queries
-4. Save results to `/tmp/logs/`
-
 ## Oracle Query Interface
 
-The framework provides a modular oracle interface for querying target models. This ensures complete separation between the attack process and target model access.
+The framework provides a simplified oracle interface. The attacker only needs the model name and raw features - the oracle automatically handles all preprocessing.
 
-### Local Oracle (No Server Required)
+### Simple Usage
 
-For local model files, use the `scripts/oracle/query_labels.py` script:
+```python
+from src.targets.oracle_client import create_oracle_from_name
 
-**For Keras/TensorFlow models (H5)**:
-```bash
-python scripts/oracle/query_labels.py \
-  --input-path data/pool_features.npy \
-  --output-path cache/pool_labels.npy \
-  --model-type h5 \
-  --model-path artifacts/targets/target_model.h5
+# Initialize oracle - only need the model name!
+oracle = create_oracle_from_name("LEE")  # or "CEE", "CSE", "LSE"
+
+# Query with raw features
+import numpy as np
+sample = np.random.randn(2381).astype(np.float32)
+prediction = oracle.predict(sample)  # Returns 0 or 1
+
+print(f"Prediction: {prediction[0]}")  # 0 = Benign, 1 = Malware
 ```
 
-**For LightGBM models**:
-```bash
-python scripts/oracle/query_labels.py \
-  --input-path data/pool.parquet \
-  --output-path cache/pool_labels.npy \
-  --model-type lgb \
-  --model-path artifacts/targets/target_model.lgb \
-  --normalization-stats-path artifacts/targets/target_normalization_stats.npz
-```
+### Supported Models
 
-The extraction scripts can use pre-generated labels or directly import the oracle client for on-the-fly queries.
+| Model Name | Type | File | Normalization Stats |
+|-----------|------|------|---------------------|
+| CEE | Keras | `CEE.h5` | `CEE_normalization_stats.npz` |
+| LEE | LightGBM | `LEE.lgb` | `LEE_normalization_stats.npz` |
+| CSE | Keras | `CSE.h5` | (optional) |
+| LSE | LightGBM | `LSE.lgb` | `LSE_normalization_stats.npz` |
+
+### Oracle Requirements
+
+- Models must be placed in `artifacts/targets/`
+- Normalization stats (if available) must have the same name as the model + `_normalization_stats.npz`
+- For LightGBM models, normalization stats are **required**
+- For Keras models, normalization stats are **optional** (will be used if available)
+
+### Black-Box Compliance
+
+The oracle interface is black-box compliant:
+- Attacker only needs model name and raw features
+- All implementation details are hidden
+- Model type, normalization, and preprocessing are automatic
+- Only `predict()` and `predict_proba()` are exposed
 
 ## Feature Space Independence
 
@@ -205,19 +238,13 @@ python scripts/attacks/evaluate_surrogate_similarity.py \
   --output_dir /path/to/output
 ```
 
-Metrics include:
-- Accuracy
-- Agreement with target
-- AUC-ROC
-- Precision, Recall, F1-score
-- Confusion matrices
+### Metrics
 
-## Documentation
-
-- [docs/SETUP.md](docs/SETUP.md): Detailed setup and installation guide
-- [docs/ORACLE_USAGE.md](docs/ORACLE_USAGE.md): Oracle query interface documentation
-- [docs/BLACKBOX_COMPLIANCE.md](docs/BLACKBOX_COMPLIANCE.md): Black-box compliance and feature alignment
-- [docs/reports/metrics_explanation.md](docs/reports/metrics_explanation.md): Detailed explanation of evaluation metrics
+- **Accuracy**: Correct prediction rate with ground truth
+- **Agreement**: Agreement rate between surrogate and target predictions (most important metric)
+- **AUC-ROC**: Area under ROC curve
+- **Precision, Recall, F1-score**: Classification performance metrics
+- **Confusion matrices**: Detailed classification breakdown
 
 ## License
 
