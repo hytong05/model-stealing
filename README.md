@@ -217,7 +217,7 @@ Metrics include:
 - [docs/SETUP.md](docs/SETUP.md): Detailed setup and installation guide
 - [docs/ORACLE_USAGE.md](docs/ORACLE_USAGE.md): Oracle query interface documentation
 - [docs/BLACKBOX_COMPLIANCE.md](docs/BLACKBOX_COMPLIANCE.md): Black-box compliance and feature alignment
-- [docs/reports/](docs/reports/): Generated evaluation reports and metrics
+- [docs/reports/metrics_explanation.md](docs/reports/metrics_explanation.md): Detailed explanation of evaluation metrics
 
 ## License
 
