@@ -2,162 +2,107 @@
 
 **MIR (Model Inferred Replica)** is a component of the **MIGATE** framework (Model Inferred Replica for Adversarial Generalized Evasion), focusing on the model extraction phase for malware classifiers and antivirus systems.
 
-## Overview
-
 MIR provides a comprehensive framework for extracting surrogate models from black-box malware classifiers and antivirus systems using active learning techniques. The extracted models can achieve high agreement with target models while maintaining low false positive rates.
 
-### Key Features
+## Features
 
-- **Multiple Target Support**: Extract models from various targets including:
-  - EMBER-based classifiers
-  - SOREL-20M models (FCNN, LightGBM)
-  - Commercial antivirus systems (AV1-AV4)
-  
-- **Active Learning Strategies**: Multiple sampling methods for efficient query selection:
-  - Entropy-based sampling
-  - Random sampling
-  - Medoids clustering
-  - MC-Dropout uncertainty
-  - K-center greedy
-  - Ensemble-based methods
+- **Multiple Target Support**: Extract models from EMBER-based classifiers, SOREL-20M models (FCNN, LightGBM), and commercial antivirus systems (AV1-AV4)
+- **Active Learning Strategies**: Entropy-based sampling, random sampling, medoids clustering, MC-Dropout uncertainty, K-center greedy, and ensemble-based methods
+- **Surrogate Model Types**: Deep Neural Networks (DNN, dualDNN), LightGBM, and Support Vector Machines (SVM)
+- **Feature Space Independence**: Automatic feature alignment for scenarios where target and attacker use different feature spaces
+- **Black-Box Compliance**: Oracle interface hides all implementation details, requiring only model name and raw features
 
-- **Surrogate Model Types**: Support for various surrogate architectures:
-  - Deep Neural Networks (DNN, dualDNN)
-  - LightGBM
-  - Support Vector Machines (SVM)
-
-- **Feature Space Independence**: Handles scenarios where target and attacker use different feature spaces through automatic feature alignment
-
-## Setup
+## Installation
 
 ### Prerequisites
 
-- Python 3.8 or higher
-- pip (usually included with Python)
-- Git (for installing ember package)
+- Python 3.8+
+- pip
+- Git
 
-### Quick Setup (Recommended)
-
-Run the automated setup script:
+### Quick Setup
 
 ```bash
+# Clone repository
+git clone git@github.com:hytong05/model-stealing.git
+cd model-stealing
+
+# Run setup script
 ./setup_venv.sh
-```
 
-This script will:
-1. Check Python version
-2. Create a virtual environment in `venv/`
-3. Install all dependencies from `requirements.txt`
-4. Install the `ember` package from GitHub (not available on PyPI)
-
-### Manual Setup
-
-**Step 1: Create Virtual Environment**
-```bash
-python3 -m venv venv
-```
-
-**Step 2: Activate Virtual Environment**
-
-On Linux/Mac:
-```bash
+# Activate virtual environment
 source venv/bin/activate
 ```
 
-On Windows:
-```bash
-venv\Scripts\activate
-```
+The setup script will:
+1. Check Python version
+2. Create virtual environment in `venv/`
+3. Install dependencies from `requirements.txt`
+4. Install `ember` package from GitHub
 
-**Step 3: Install Dependencies**
+### Manual Setup
+
 ```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
-
-# Install ember package from GitHub (not available on PyPI)
 pip install git+https://github.com/endgameinc/ember.git
 ```
 
-### Troubleshooting
-
-- **Import Errors**: Ensure virtual environment is activated and you're in the project root directory
-- **TensorFlow Issues**: Try `pip install tensorflow --upgrade`
-- **PyTorch Issues**: May require separate installation. See: https://pytorch.org/get-started/locally/
-- **Ember Package**: If installation fails, try:
-  ```bash
-  pip install tqdm lief
-  pip install git+https://github.com/endgameinc/ember.git
-  ```
-
-## Project Structure
-
-```
-model-stealing/
-├── src/                           # Core library
-│   ├── attackers/                 # Attack implementations
-│   ├── targets/                    # Target model interfaces
-│   ├── sampling/                  # Active learning strategies
-│   ├── models/                    # Surrogate model architectures
-│   ├── datasets/                  # Dataset loaders
-│   └── utils/                     # Utility functions
-├── scripts/                       # Executable utilities
-│   ├── attacks/                   # Extraction pipelines
-│   │   ├── model_extraction.py    # Main extraction script
-│   │   ├── extract_final_model.py
-│   │   └── evaluate_surrogate_similarity.py
-│   ├── oracle/                    # Black-box query interfaces
-│   ├── data/                      # Data preprocessing
-│   ├── inference/                 # Model inference utilities
-│   └── examples/                  # Example usage scripts
-├── config/                        # Configuration files
-├── data/                          # Datasets (not tracked)
-├── artifacts/                     # Model artifacts (not tracked)
-│   └── targets/                   # Target model files
-├── output/                        # Experiment outputs (not tracked)
-├── storage/                       # Training checkpoints (not tracked)
-├── logs/                          # Log files (not tracked)
-├── notebooks/                     # Jupyter notebooks
-├── examples/                      # Example scripts
-├── requirements.txt               # Python dependencies
-└── setup_venv.sh                  # Virtual environment setup script
-```
-
-## Usage
+## Quick Start
 
 ### Basic Model Extraction
-
-The main extraction script is `scripts/attacks/model_extraction.py`:
 
 ```bash
 python scripts/attacks/model_extraction.py \
   --data_dir /path/to/data \
-  --dataset {ember,sorel,AV} \
-  --target_model {ember,sorel-FCNN,sorel-LGB,AV1,AV2,AV3,AV4} \
-  --type {DNN,dualDNN,LGB,SVM} \
-  --method {entropy,random,medoids,mc_dropout,k-center,ensemble} \
+  --dataset ember \
+  --target_model sorel-FCNN \
+  --type LGB \
+  --method medoids \
   --budget 2500 \
   --num_queries 10 \
-  --num_epochs 1 \
   --log_dir /path/to/logs \
-  --fpr 0.006 \
   --seed 42
 ```
 
-### Parameters
+### Oracle Query Interface
 
-- `--data_dir`: Directory containing the dataset
-- `--dataset`: Dataset type (`ember`, `sorel`, or `AV`)
-- `--target_model`: Target model to extract from
-- `--type`: Surrogate model architecture
-- `--method`: Active learning sampling strategy
-- `--budget`: Total query budget
-- `--num_queries`: Number of query rounds
-- `--num_epochs`: Training epochs per round
-- `--log_dir`: Output directory for logs and models
-- `--fpr`: False positive rate threshold for metrics
-- `--seed`: Random seed for reproducibility
+```python
+from src.targets.oracle_client import create_oracle_from_name
+import numpy as np
 
-### Example: Extracting from SOREL-FCNN
+# Initialize oracle (only need model name)
+oracle = create_oracle_from_name("LEE")  # or "CEE", "CSE", "LSE"
+
+# Query with raw features
+sample = np.random.randn(2381).astype(np.float32)
+prediction = oracle.predict(sample)  # Returns 0 (Benign) or 1 (Malware)
+```
+
+## Usage
+
+### Model Extraction Parameters
+
+| Parameter | Description | Options |
+|-----------|-------------|---------|
+| `--data_dir` | Directory containing dataset | Path |
+| `--dataset` | Dataset type | `ember`, `sorel`, `AV` |
+| `--target_model` | Target model to extract | `ember`, `sorel-FCNN`, `sorel-LGB`, `AV1-AV4` |
+| `--type` | Surrogate model architecture | `DNN`, `dualDNN`, `LGB`, `SVM` |
+| `--method` | Active learning strategy | `entropy`, `random`, `medoids`, `mc_dropout`, `k-center`, `ensemble` |
+| `--budget` | Total query budget | Integer |
+| `--num_queries` | Number of query rounds | Integer |
+| `--num_epochs` | Training epochs per round | Integer |
+| `--log_dir` | Output directory | Path |
+| `--fpr` | False positive rate threshold | Float |
+| `--seed` | Random seed | Integer |
+
+### Example: Extract from SOREL-FCNN
 
 ```bash
 python scripts/attacks/model_extraction.py \
@@ -174,27 +119,7 @@ python scripts/attacks/model_extraction.py \
   --seed 42
 ```
 
-## Oracle Query Interface
-
-The framework provides a simplified oracle interface. The attacker only needs the model name and raw features - the oracle automatically handles all preprocessing.
-
-### Simple Usage
-
-```python
-from src.targets.oracle_client import create_oracle_from_name
-
-# Initialize oracle - only need the model name!
-oracle = create_oracle_from_name("LEE")  # or "CEE", "CSE", "LSE"
-
-# Query with raw features
-import numpy as np
-sample = np.random.randn(2381).astype(np.float32)
-prediction = oracle.predict(sample)  # Returns 0 or 1
-
-print(f"Prediction: {prediction[0]}")  # 0 = Benign, 1 = Malware
-```
-
-### Supported Models
+### Supported Target Models
 
 | Model Name | Type | File | Normalization Stats |
 |-----------|------|------|---------------------|
@@ -203,32 +128,15 @@ print(f"Prediction: {prediction[0]}")  # 0 = Benign, 1 = Malware
 | CSE | Keras | `CSE.h5` | (optional) |
 | LSE | LightGBM | `LSE.lgb` | `LSE_normalization_stats.npz` |
 
-### Oracle Requirements
-
+**Requirements:**
 - Models must be placed in `artifacts/targets/`
-- Normalization stats (if available) must have the same name as the model + `_normalization_stats.npz`
-- For LightGBM models, normalization stats are **required**
-- For Keras models, normalization stats are **optional** (will be used if available)
+- Normalization stats naming: `{model_name}_normalization_stats.npz`
+- LightGBM models require normalization stats
+- Keras models: normalization stats optional
 
-### Black-Box Compliance
+### Evaluation
 
-The oracle interface is black-box compliant:
-- Attacker only needs model name and raw features
-- All implementation details are hidden
-- Model type, normalization, and preprocessing are automatic
-- Only `predict()` and `predict_proba()` are exposed
-
-## Feature Space Independence
-
-MIR handles scenarios where target and attacker models use different feature spaces:
-
-- **For Antivirus Systems**: Uses raw binary files as the common interface. The AV processes files with its internal features, while the surrogate learns on attacker-defined features (e.g., EMBER features).
-
-- **For ML Models**: Automatically performs feature alignment. If the attacker's feature space is larger than the target's, excess features are trimmed. The framework ensures interface compliance while maintaining feature space independence.
-
-## Evaluation
-
-After extraction, evaluate surrogate model similarity to the target:
+Evaluate extracted surrogate model:
 
 ```bash
 python scripts/attacks/evaluate_surrogate_similarity.py \
@@ -238,13 +146,68 @@ python scripts/attacks/evaluate_surrogate_similarity.py \
   --output_dir /path/to/output
 ```
 
-### Metrics
-
+**Metrics:**
+- **Agreement**: Agreement rate between surrogate and target (primary metric)
 - **Accuracy**: Correct prediction rate with ground truth
-- **Agreement**: Agreement rate between surrogate and target predictions (most important metric)
 - **AUC-ROC**: Area under ROC curve
-- **Precision, Recall, F1-score**: Classification performance metrics
+- **Precision, Recall, F1-score**: Classification performance
 - **Confusion matrices**: Detailed classification breakdown
+
+## Project Structure
+
+```
+model-stealing/
+├── src/                    # Core library
+│   ├── attackers/         # Attack implementations
+│   ├── targets/           # Target model interfaces
+│   ├── sampling/          # Active learning strategies
+│   ├── models/            # Surrogate architectures
+│   ├── datasets/          # Dataset loaders
+│   └── utils/             # Utilities
+├── scripts/               # Executable scripts
+│   ├── attacks/           # Extraction pipelines
+│   ├── oracle/            # Oracle interfaces
+│   ├── data/              # Data preprocessing
+│   ├── inference/         # Model inference
+│   └── examples/          # Example scripts
+├── config/                # Configuration files
+├── artifacts/             # Model artifacts (not tracked)
+│   └── targets/           # Target model files
+├── data/                  # Datasets (not tracked)
+├── output/                # Experiment outputs (not tracked)
+├── logs/                  # Log files (not tracked)
+├── requirements.txt       # Dependencies
+└── setup_venv.sh         # Setup script
+```
+
+## Key Concepts
+
+### Feature Space Independence
+
+MIR handles scenarios where target and attacker models use different feature spaces:
+
+- **Antivirus Systems**: Uses raw binary files as interface. AV processes with internal features, surrogate learns on attacker-defined features (e.g., EMBER)
+- **ML Models**: Automatic feature alignment. Excess features trimmed if attacker's space is larger than target's
+
+### Black-Box Compliance
+
+The oracle interface is designed for black-box attacks:
+
+- Attacker only needs model name and raw features
+- All implementation details hidden (model type, normalization, preprocessing)
+- Only `predict()` and `predict_proba()` exposed
+- Automatic model type detection and preprocessing
+
+## Troubleshooting
+
+- **Import Errors**: Ensure virtual environment is activated and you're in project root
+- **TensorFlow Issues**: `pip install tensorflow --upgrade`
+- **PyTorch Issues**: See [PyTorch installation guide](https://pytorch.org/get-started/locally/)
+- **Ember Package**: If installation fails:
+  ```bash
+  pip install tqdm lief
+  pip install git+https://github.com/endgameinc/ember.git
+  ```
 
 ## License
 
