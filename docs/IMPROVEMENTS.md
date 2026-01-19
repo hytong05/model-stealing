@@ -1,54 +1,54 @@
-# Cải Tiến Query Selection và Class Imbalance Handling
+# Improvements: Query Selection and Class Imbalance Handling
 
-## Tóm Tắt
+## Summary
 
-Đã cải tiến 2 điểm chính:
-1. **Stratified Entropy Sampling**: Chọn queries cân bằng class (50/50) ngay từ đầu
-2. **scale_pos_weight trong LGBAttacker**: Xử lý class imbalance trong training
+Two major improvements have been implemented:
+1. **Stratified Entropy Sampling**: Select balanced class queries (50/50) from the start
+2. **scale_pos_weight in LGBAttacker**: Handle class imbalance in training
 
 ## 1. Stratified Entropy Sampling
 
-### Vấn Đề Trước Đây
+### Previous Problem
 
-- Chọn queries dựa trên entropy (không quan tâm class)
-- Sau đó mới query oracle và cân bằng class
-- Phải query oracle nhiều lần (không hiệu quả)
-- Class imbalance nghiêm trọng (96% class 0, 4% class 1)
+- Selected queries based on entropy (ignoring class)
+- Then queried oracle and balanced class
+- Had to query oracle multiple times (inefficient)
+- Severe class imbalance (96% class 0, 4% class 1)
 
-### Giải Pháp Mới
+### New Solution
 
-**Bước 1: Query Oracle Trước**
-- Query oracle trên toàn bộ pool (hoặc subset lớn) để biết labels TRƯỚC
-- Vì attacker kiểm soát thief dataset, có thể làm điều này
+**Step 1: Query Oracle First**
+- Query oracle on entire pool (or large subset) to know labels FIRST
+- Since attacker controls thief dataset, this is possible
 
-**Bước 2: Tính Entropy**
-- Tính entropy cho tất cả samples trong pool đã query
-- Sắp xếp theo entropy giảm dần
+**Step 2: Calculate Entropy**
+- Calculate entropy for all samples in queried pool
+- Sort by entropy descending
 
-**Bước 3: Chọn Queries Cân Bằng**
-- Chọn 50% từ class 0 (entropy cao nhất)
-- Chọn 50% từ class 1 (entropy cao nhất)
-- Đảm bảo class distribution cân bằng ngay từ đầu
+**Step 3: Select Balanced Queries**
+- Select 50% from class 0 (highest entropy)
+- Select 50% from class 1 (highest entropy)
+- Ensure balanced class distribution from the start
 
-### Lợi Ích
+### Benefits
 
-✅ **Cân bằng class ngay từ đầu**: 50% class 0, 50% class 1
-✅ **Hiệu quả hơn**: Chỉ query oracle 1 lần (trên subset lớn)
-✅ **Đa dạng hơn**: Trong mỗi class, chọn samples có entropy cao nhất
-✅ **Hạn chế class imbalance**: Model học tốt hơn với data cân bằng
+✅ **Balanced class from start**: 50% class 0, 50% class 1
+✅ **More efficient**: Only query oracle once (on large subset)
+✅ **More diverse**: Within each class, select samples with highest entropy
+✅ **Reduced class imbalance**: Model learns better with balanced data
 
-## 2. scale_pos_weight trong LGBAttacker
+## 2. scale_pos_weight in LGBAttacker
 
-### Vấn Đề Trước Đây
+### Previous Problem
 
-- LGBAttacker không có `scale_pos_weight`
-- Model không được điều chỉnh cho class imbalance
-- Probabilities thấp (mean = 0.126)
-- Threshold phải thấp (0.1) để tối ưu F1-score
+- LGBAttacker didn't have `scale_pos_weight`
+- Model wasn't adjusted for class imbalance
+- Low probabilities (mean = 0.126)
+- Threshold had to be low (0.1) to optimize F1-score
 
-### Giải Pháp Mới
+### New Solution
 
-**Tự động tính scale_pos_weight:**
+**Automatically calculate scale_pos_weight:**
 ```python
 train_label_counts = np.bincount(y)
 num_negative = train_label_counts[0]
@@ -59,34 +59,33 @@ if num_positive > 0 and num_negative > 0:
     self.lgb_params['scale_pos_weight'] = scale_pos_weight
 ```
 
-### Lợi Ích
+### Benefits
 
-✅ **Xử lý class imbalance**: Model được điều chỉnh tự động
-✅ **Probabilities cao hơn**: Model tự tin hơn
-✅ **Threshold gần 0.5**: Không cần threshold thấp
-✅ **Accuracy tốt hơn**: Model học tốt hơn với class imbalance
+✅ **Handles class imbalance**: Model automatically adjusted
+✅ **Higher probabilities**: Model more confident
+✅ **Threshold near 0.5**: No need for low threshold
+✅ **Better accuracy**: Model learns better with class imbalance
 
-## So Sánh
+## Comparison
 
-| Metric | Trước | Sau |
-|--------|-------|-----|
-| Query selection | Entropy (không cân bằng) | Stratified Entropy (50/50) |
+| Metric | Before | After |
+|--------|--------|-------|
+| Query selection | Entropy (unbalanced) | Stratified Entropy (50/50) |
 | Class distribution | ~96/4 | ~50/50 |
-| scale_pos_weight | Không có | Tự động tính |
-| Probabilities mean | 0.126 | Cao hơn (dự kiến) |
-| Threshold | 0.1 | Gần 0.5 (dự kiến) |
-| Oracle queries | Nhiều lần | 1 lần (hiệu quả hơn) |
+| scale_pos_weight | Not present | Automatically calculated |
+| Probabilities mean | 0.126 | Higher (expected) |
+| Threshold | 0.1 | Near 0.5 (expected) |
+| Oracle queries | Multiple times | Once (more efficient) |
 
-## Kết Luận
+## Conclusion
 
-✅ **Cải tiến query selection**: Cân bằng class ngay từ đầu
-✅ **Cải tiến model training**: Xử lý class imbalance tự động
-✅ **Hiệu quả hơn**: Giảm số lần query oracle
-✅ **Kết quả tốt hơn**: Model học tốt hơn với data cân bằng
+✅ **Improved query selection**: Balanced class from the start
+✅ **Improved model training**: Automatically handles class imbalance
+✅ **More efficient**: Reduced number of oracle queries
+✅ **Better results**: Model learns better with balanced data
 
 ## Next Steps
 
-1. Test với LEE model để xem kết quả
-2. So sánh accuracy và agreement với version cũ
-3. Điều chỉnh tỷ lệ class nếu cần (có thể không phải 50/50)
-
+1. Test with LEE model to see results
+2. Compare accuracy and agreement with old version
+3. Adjust class ratio if needed (may not need to be 50/50)

@@ -1,134 +1,137 @@
-# Phân Tích Black Box Compliance
+# Black-Box Compliance Analysis
 
-## Tóm Tắt
+## Summary
 
-Đã kiểm tra và cải thiện code để đảm bảo tính chất **black box (hộp đen)** trong model extraction attack.
+This document provides a detailed analysis of black-box compliance in the MIR framework, ensuring proper model extraction attacks where the attacker has minimal knowledge about the target model.
 
-## Black Box Attack Requirements
+## Black-Box Attack Requirements
 
-### ✅ Attacker CHỈ được biết:
-1. **Tên model** (hoặc API endpoint) - ✅ OK
-2. **Raw features** (có thể query) - ✅ OK
-3. **Predictions** (0 hoặc 1, hoặc probabilities) - ✅ OK
+### ✅ Attacker CAN Know:
+1. **Model name** (or API endpoint) - ✅ OK
+2. **Raw features** (can query) - ✅ OK
+3. **Predictions** (0 or 1, or probabilities) - ✅ OK
 
-### ❌ Attacker KHÔNG được biết:
-1. **Model type** (Keras vs LightGBM) - ✅ Đã ẩn
-2. **Normalization statistics** - ✅ Đã ẩn
-3. **Model architecture** - ✅ Đã ẩn
-4. **Model parameters/weights** - ✅ Đã ẩn
-5. **Training data của target model** - ✅ OK (attacker không có access)
+### ❌ Attacker CANNOT Know:
+1. **Model type** (Keras vs LightGBM) - ✅ Hidden
+2. **Normalization statistics** - ✅ Hidden
+3. **Model architecture** - ✅ Hidden
+4. **Model parameters/weights** - ✅ Hidden
+5. **Target model training data** - ✅ OK (attacker has no access)
 6. **Feature importance** - ✅ OK
-7. **Internal workings của model** - ✅ Đã ẩn
+7. **Internal model workings** - ✅ Hidden
 
-## Kiểm Tra Chi Tiết
+## Detailed Checks
 
 ### 1. Oracle Client Interface
 
-**Trước (Vi Phạm):**
+**Before (Violates):**
 ```python
-# Attacker phải biết model_type và normalization_stats_path
+# Attacker must know model_type and normalization_stats_path
 oracle_client = LocalOracleClient(
-    model_type="lgb",  # ❌ Attacker biết model type
+    model_type="lgb",  # ❌ Attacker knows model type
     model_path=...,
-    normalization_stats_path=...,  # ❌ Attacker biết normalization stats
+    normalization_stats_path=...,  # ❌ Attacker knows normalization stats
 )
 ```
 
-**Sau (Black Box Compliant):**
+**After (Black-Box Compliant):**
 ```python
-# Attacker chỉ cần tên model
+# Attacker only needs model name
 oracle_client = create_oracle_from_name(
-    model_name="LEE",  # ✅ Chỉ cần tên model
+    model_name="LEE",  # ✅ Only need model name
     feature_dim=2381,
 )
-# Tự động detect model_type, load normalization_stats, etc.
+# Automatically detects model_type, loads normalization_stats, etc.
 ```
 
 ### 2. BlackBoxOracleClient
 
-**Thuộc tính Attacker Có Thể Truy Cập:**
-- ✅ `model_name`: Tên model (OK)
+**Attributes Attacker Can Access:**
+- ✅ `model_name`: Model name (OK)
 - ✅ `predict(X)`: Predict binary labels (OK)
 - ✅ `predict_proba(X)`: Predict probabilities (OK)
-- ✅ `supports_probabilities()`: Kiểm tra hỗ trợ probabilities (OK)
-- ✅ `get_required_feature_dim()`: Lấy số features yêu cầu (OK - có thể biết qua API docs)
+- ✅ `supports_probabilities()`: Check probability support (OK)
+- ✅ `get_required_feature_dim()`: Get required feature dimension (OK - may know via API docs)
 
-**Thuộc tính Attacker KHÔNG Thể Truy Cập:**
-- ✅ `model_type`: Đã ẩn
-- ✅ `model_path`: Đã ẩn
-- ✅ `normalization_stats_path`: Đã ẩn
-- ⚠️ `_oracle`: Internal (trong Python vẫn có thể truy cập, nhưng trong thực tế oracle chạy trên server riêng)
+**Attributes Attacker CANNOT Access:**
+- ✅ `model_type`: Hidden
+- ✅ `model_path`: Hidden
+- ✅ `normalization_stats_path`: Hidden
+- ⚠️ `_oracle`: Internal (in Python can still access, but in practice oracle runs on separate server)
 
-### 3. Ground Truth Labels từ Train Data
+### 3. Ground Truth Labels from Training Data
 
-**✅ Hợp Lệ:**
-- Attacker sử dụng ground truth labels từ thief dataset
-- Attacker kiểm soát thief dataset, có thể có labels của chính data của mình
-- Đây không vi phạm black box assumption
+**✅ Valid:**
+- Attacker uses ground truth labels from thief dataset
+- Attacker controls thief dataset, may have labels for their own data
+- This does not violate black-box assumption
 
 ### 4. Logging
 
-**⚠️ Lưu Ý:**
-- Một số thông tin (model_type, model_path) vẫn được log trong `extract_final_model.py`
-- Trong black box attack thực tế, attacker không nên thấy những log này
-- **Giải pháp**: Logging chỉ nên ở phía nhà cung cấp (server), không expose cho attacker
+**⚠️ Note:**
+- Some information (model_type, model_path) is still logged in `extract_final_model.py`
+- In real black-box attacks, attacker should not see these logs
+- **Solution**: Logging should only be on provider side (server), not exposed to attacker
 
-## Kết Quả Kiểm Tra
+## Check Results
 
 ```
-✅ model_type: Đã ẩn
-✅ model_path: Đã ẩn
-✅ normalization_stats_path: Đã ẩn
-✅ Oracle client chỉ expose predict() và predict_proba()
-✅ Attacker chỉ cần tên model để tạo oracle client
+✅ model_type: Hidden
+✅ model_path: Hidden
+✅ normalization_stats_path: Hidden
+✅ Oracle client only exposes predict() and predict_proba()
+✅ Attacker only needs model name to create oracle client
 ```
 
-## Cải Tiến Đã Thực Hiện
+## Implemented Improvements
 
-### 1. Tạo BlackBoxOracleClient
-- Wrap `LocalOracleClient` để ẩn implementation details
-- Chỉ expose `predict()` và `predict_proba()`
-- Tự động detect model type, load normalization stats
+### 1. Created BlackBoxOracleClient
+- Wraps `LocalOracleClient` to hide implementation details
+- Only exposes `predict()` and `predict_proba()`
+- Automatically detects model type, loads normalization stats
 
-### 2. Cập Nhật create_oracle_from_name
-- Trả về `BlackBoxOracleClient` (mặc định `blackbox=True`)
-- Tự động detect mọi thứ, ẩn khỏi attacker
+### 2. Updated create_oracle_from_name
+- Returns `BlackBoxOracleClient` (default `blackbox=True`)
+- Automatically detects everything, hidden from attacker
 
-### 3. Cập Nhật Attack Script
-- Khi dùng `model_name`, tự động dùng `BlackBoxOracleClient`
-- Attacker không cần biết `model_type` hay `normalization_stats_path`
+### 3. Updated Attack Scripts
+- When using `model_name`, automatically uses `BlackBoxOracleClient`
+- Attacker doesn't need to know `model_type` or `normalization_stats_path`
 
-## Lưu Ý Quan Trọng
+## Important Considerations
 
 ### 1. Python Limitation
-- Trong Python, không có true private attributes
-- Attacker vẫn có thể truy cập `_oracle` (nhưng không nên)
-- **Trong thực tế**: Oracle client chạy trên server riêng, attacker không có access đến code
+- In Python, there are no true private attributes
+- Attacker can still access `_oracle` (but shouldn't)
+- **In practice**: Oracle client runs on separate server, attacker has no access to code
 
 ### 2. Logging
-- Logging có thể leak thông tin
-- **Giải pháp**: Tắt logging hoặc chỉ log ở phía server
-- Attacker không nên thấy logs về model_type, model_path, etc.
+- Logging may leak information
+- **Solution**: Disable logging or only log on server side
+- Attacker should not see logs about model_type, model_path, etc.
 
 ### 3. API Design
-- Trong black box attack thực tế, oracle nên là một API endpoint
-- Attacker chỉ có thể query qua HTTP/REST API
-- Không có access đến code, logs, hay file system
+- In real black-box attacks, oracle should be an API endpoint
+- Attacker can only query via HTTP/REST API
+- No access to code, logs, or file system
 
-## Kết Luận
+## Conclusion
 
-✅ **Đã cải thiện** để đảm bảo tính chất black box:
-- Attacker chỉ cần tên model
-- Oracle client tự động xử lý mọi thứ
-- Implementation details được ẩn
+✅ **Improved** to ensure black-box compliance:
+- Attacker only needs model name
+- Oracle client automatically handles everything
+- Implementation details are hidden
 
-⚠️ **Vẫn còn một số điểm**:
-- Logging có thể leak thông tin (có thể tắt)
-- Python không có true private (nhưng trong thực tế oracle chạy trên server riêng)
+⚠️ **Still some points**:
+- Logging may leak information (can be disabled)
+- Python doesn't have true private (but in practice oracle runs on separate server)
 
-💡 **Trong thực tế**:
-- Oracle client nên chạy trên server riêng (của nhà cung cấp)
-- Attacker chỉ có thể query qua API
-- Không có access đến code hay logs
+💡 **In practice**:
+- Oracle client should run on separate server (provider side)
+- Attacker can only query via API
+- No access to code or logs
 
+## See Also
 
+- [BLACKBOX_COMPLIANCE.md](BLACKBOX_COMPLIANCE.md) - Black-box compliance guide
+- [ORACLE_USAGE.md](ORACLE_USAGE.md) - Oracle usage examples

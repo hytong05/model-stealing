@@ -1,119 +1,129 @@
-# Hướng Dẫn Sử Dụng Oracle - Cực Kỳ Đơn Giản
+# Oracle Query Interface Guide
 
-## Tổng Quan
+## Overview
 
-Oracle client đã được đơn giản hóa tối đa. **Attacker chỉ cần tên model** và gửi raw features, oracle sẽ tự động xử lý mọi thứ.
+The MIR framework provides a simplified oracle interface for querying target models. The attacker only needs the model name and raw features - the oracle automatically handles all preprocessing and model-specific details.
 
-## Cách Sử Dụng Đơn Giản Nhất
+## Simple Usage
 
-### 1. Chỉ cần tên model
+### Basic Example
 
 ```python
 from src.targets.oracle_client import create_oracle_from_name
 
-# Khởi tạo oracle - chỉ cần tên model!
-oracle = create_oracle_from_name("LEE")  # hoặc "CEE", "CSE", "LSE"
+# Initialize oracle - only need the model name!
+oracle = create_oracle_from_name("LEE")  # or "CEE", "CSE", "LSE"
 
-# Query với raw features
+# Query with raw features
 sample = np.random.randn(2381).astype(np.float32)
-prediction = oracle.predict(sample)  # Trả về 0 hoặc 1
+prediction = oracle.predict(sample)  # Returns 0 or 1
 
 print(f"Prediction: {prediction[0]}")  # 0 = Benign, 1 = Malware
 ```
 
-### 2. Oracle tự động xử lý
+### Automatic Processing
 
-Oracle sẽ tự động:
-- ✅ Tìm model file (`.h5` hoặc `.lgb`)
-- ✅ Detect model type (Keras hay LightGBM)
-- ✅ Tìm normalization stats
-- ✅ Normalize features
-- ✅ Align feature dimensions
-- ✅ Trả về binary prediction
+The oracle automatically handles:
+- ✅ Finding model files (`.h5` or `.lgb`)
+- ✅ Detecting model type (Keras or LightGBM)
+- ✅ Finding normalization statistics
+- ✅ Normalizing features
+- ✅ Aligning feature dimensions
+- ✅ Returning binary predictions
 
-**Attacker không cần biết:**
-- ❌ Model type (h5 hay lgb)
-- ❌ Đường dẫn model file
-- ❌ Normalization stats
+**The attacker does NOT need to know:**
+- ❌ Model type (h5 or lgb)
+- ❌ Model file path
+- ❌ Normalization statistics
 - ❌ Preprocessing steps
 
-## Các Model Hỗ Trợ
+## Supported Models
 
-| Tên Model | Type | File | Normalization Stats |
+| Model Name | Type | File | Normalization Stats |
 |-----------|------|------|---------------------|
 | CEE | Keras | `CEE.h5` | `CEE_normalization_stats.npz` |
 | LEE | LightGBM | `LEE.lgb` | `LEE_normalization_stats.npz` |
-| CSE | Keras | `CSE.h5` | (tùy chọn) |
+| CSE | Keras | `CSE.h5` | (optional) |
 | LSE | LightGBM | `LSE.lgb` | `LSE_normalization_stats.npz` |
 
-## Ví Dụ Đầy Đủ
+## Complete Example
 
 ```python
 import numpy as np
 from src.targets.oracle_client import create_oracle_from_name
 
-# 1. Khởi tạo oracle
+# 1. Initialize oracle
 oracle = create_oracle_from_name("LEE")
 
-# 2. Query một sample
+# 2. Query a single sample
 sample = np.random.randn(2381).astype(np.float32)
 prediction = oracle.predict(sample)
 print(f"Prediction: {prediction[0]}")
 
-# 3. Query batch
+# 3. Query a batch
 batch = np.random.randn(10, 2381).astype(np.float32)
 predictions = oracle.predict(batch)
 print(f"Predictions: {predictions}")
 
-# 4. Query với probabilities (nếu cần)
+# 4. Query with probabilities (if supported)
 if oracle.supports_probabilities():
     probs = oracle.predict_proba(batch)
     print(f"Probabilities: {probs}")
 ```
 
-## Sử Dụng Trong Script
+## Usage in Scripts
 
-### Test Oracle Query
+### Testing Oracle Queries
 
 ```bash
-# Chỉ cần tên model - không cần model-type hay model-path
+# Only need model name - no model-type or model-path required
 python config/test_oracle_query.py \
     --parquet-path data/test_ember_2018_v2_features_label_other.parquet \
     --model-name LEE \
     --max-samples 5000
 ```
 
-### Trong Attack Script
+### In Attack Scripts
 
 ```python
 from src.targets.oracle_client import create_oracle_from_name
 
-# Trong attack script
+# In attack script
 oracle = create_oracle_from_name("LEE")
 
 # Query samples
 for sample in samples:
     label = oracle.predict(sample)
-    # Sử dụng label để train surrogate model
+    # Use label to train surrogate model
 ```
 
-## Lợi Ích
+## Benefits
 
-1. **Đơn giản**: Chỉ cần tên model
-2. **Tự động**: Oracle tự detect và xử lý mọi thứ
-3. **Linh hoạt**: Hoạt động với cả Keras và LightGBM
-4. **Gọn gàng**: Không cần biết chi tiết về preprocessing
+1. **Simplicity**: Only need the model name
+2. **Automatic**: Oracle automatically detects and handles everything
+3. **Flexible**: Works with both Keras and LightGBM models
+4. **Clean**: No need to know preprocessing details
 
-## Lưu Ý
+## Important Notes
 
-- Models phải được đặt trong `artifacts/targets/`
-- Normalization stats (nếu có) phải cùng tên với model + `_normalization_stats.npz`
-- Với LightGBM, normalization stats là **bắt buộc**
-- Với Keras, normalization stats là **tùy chọn** (nếu có sẽ được dùng)
+- Models must be placed in `artifacts/targets/`
+- Normalization stats (if available) must have the same name as the model + `_normalization_stats.npz`
+- For LightGBM models, normalization stats are **required**
+- For Keras models, normalization stats are **optional** (will be used if available)
 
-## Xem Thêm
+## Black-Box Compliance
 
-- `examples/ultra_simple_oracle.py` - Ví dụ cực kỳ đơn giản
-- `examples/simple_oracle_query.py` - Ví dụ đầy đủ hơn
-- `config/test_oracle_query.py` - Script test oracle
+The oracle interface is designed to be black-box compliant:
+- Attacker only needs model name and raw features
+- All implementation details are hidden
+- Model type, normalization, and preprocessing are automatic
+- Only `predict()` and `predict_proba()` are exposed
 
+For more details on black-box compliance, see [BLACKBOX_COMPLIANCE.md](BLACKBOX_COMPLIANCE.md).
+
+## See Also
+
+- `examples/ultra_simple_oracle.py` - Ultra simple example
+- `examples/simple_oracle_query.py` - More complete example
+- `config/test_oracle_query.py` - Oracle testing script
+- [BLACKBOX_COMPLIANCE.md](BLACKBOX_COMPLIANCE.md) - Black-box attack guidelines

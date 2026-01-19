@@ -1,96 +1,95 @@
-# Tóm Tắt Các Vấn Đề Đã Sửa
+# Bug Fix Summary
 
-## Vấn Đề Nghiêm Trọng: Oracle Query với Raw Data
+## Critical Issue: Oracle Query with Raw Data
 
-### Mô Tả Vấn Đề
-- **Vấn đề**: Oracle (target model) được query với **raw data** (chưa scale), nhưng target model được train với **scaled data**.
-- **Hậu quả**: Oracle cho predictions hoàn toàn sai (0% agreement với ground truth khi query với raw data, nhưng 90% agreement khi query với scaled data).
-- **Nguyên nhân**: Target model (`final_model.h5`) được train với dữ liệu đã normalize (RobustScaler + clip), nhưng code query oracle với raw data.
+### Problem Description
+- **Issue**: Oracle (target model) was queried with **raw data** (unscaled), but target model was trained with **scaled data**.
+- **Consequence**: Oracle gave completely wrong predictions (0% agreement with ground truth when querying with raw data, but 90% agreement when querying with scaled data).
+- **Root Cause**: Target model (`final_model.h5`) was trained with normalized data (RobustScaler + clip), but code queried oracle with raw data.
 
-### Giải Pháp
-1. **Scale data TRƯỚC KHI query oracle**:
-   - Tạo scaler và fit trên seed+val+pool
-   - Scale tất cả dữ liệu (eval, seed, val, pool) trước khi query oracle
-   - Query oracle với dữ liệu đã scale
+### Solution
+1. **Scale data BEFORE querying oracle**:
+   - Create scaler and fit on seed+val+pool
+   - Scale all data (eval, seed, val, pool) before querying oracle
+   - Query oracle with scaled data
 
-2. **Cập nhật code trong `extract_final_model.py`**:
-   - Di chuyển việc scale data lên trước khi query oracle
-   - Query oracle với `X_eval_s`, `X_seed_s`, `X_val_s`, `X_pool_s` (đã scale)
-   - Train surrogate với dữ liệu đã scale (đã đúng từ trước)
+2. **Updated code in `extract_final_model.py`**:
+   - Move data scaling before oracle query
+   - Query oracle with `X_eval_s`, `X_seed_s`, `X_val_s`, `X_pool_s` (scaled)
+   - Train surrogate with scaled data (already correct)
 
-### Thay Đổi Code
+### Code Changes
 ```python
-# TRƯỚC (SAI):
-y_eval = oracle(X_eval)  # Query với raw data
-y_seed = oracle(X_seed)  # Query với raw data
-y_val = oracle(X_val)    # Query với raw data
+# BEFORE (WRONG):
+y_eval = oracle(X_eval)  # Query with raw data
+y_seed = oracle(X_seed)  # Query with raw data
+y_val = oracle(X_val)    # Query with raw data
 scaler = RobustScaler()
 scaler.fit(...)
-X_eval_s = _clip_scale(scaler, X_eval)  # Scale sau khi query
+X_eval_s = _clip_scale(scaler, X_eval)  # Scale after query
 
-# SAU (ĐÚNG):
+# AFTER (CORRECT):
 scaler = RobustScaler()
 scaler.fit(...)
-X_eval_s = _clip_scale(scaler, X_eval)  # Scale TRƯỚC
-y_eval = oracle(X_eval_s)  # Query với scaled data
-y_seed = oracle(X_seed_s)  # Query với scaled data
-y_val = oracle(X_val_s)    # Query với scaled data
+X_eval_s = _clip_scale(scaler, X_eval)  # Scale BEFORE
+y_eval = oracle(X_eval_s)  # Query with scaled data
+y_seed = oracle(X_seed_s)  # Query with scaled data
+y_val = oracle(X_val_s)    # Query with scaled data
 ```
 
-## Vấn Đề Phụ: KerasAttacker Hardcode Input Shape
+## Secondary Issue: KerasAttacker Hardcoded Input Shape
 
-### Mô Tả Vấn Đề
-- **Vấn đề**: `KerasAttacker` hardcode `input_shape=(2381,)`, nhưng dataset có thể có số đặc trưng khác.
-- **Hậu quả**: Nếu dataset có số đặc trưng khác 2381, model sẽ không khớp với dữ liệu.
+### Problem Description
+- **Issue**: `KerasAttacker` hardcoded `input_shape=(2381,)`, but dataset may have different number of features.
+- **Consequence**: If dataset has different number of features than 2381, model won't match the data.
 
-### Giải Pháp
-1. **Thêm parameter `input_shape` vào `KerasAttacker.__init__()`**:
-   - Default là `(2381,)` để giữ backward compatibility
-   - Cho phép truyền `input_shape` từ bên ngoài
+### Solution
+1. **Added parameter `input_shape` to `KerasAttacker.__init__()`**:
+   - Default is `(2381,)` to maintain backward compatibility
+   - Allows passing `input_shape` from outside
 
-2. **Cập nhật `extract_final_model.py`**:
-   - Truyền `input_shape=(feature_dim,)` vào `KerasAttacker`
-   - Đảm bảo model khớp với số đặc trưng thực tế của dataset
+2. **Updated `extract_final_model.py`**:
+   - Pass `input_shape=(feature_dim,)` to `KerasAttacker`
+   - Ensure model matches actual number of features in dataset
 
-### Thay Đổi Code
+### Code Changes
 ```python
-# TRƯỚC:
+# BEFORE:
 class KerasAttacker(AbstractAttacker):
     def __init__(self, early_stopping=30, seed=42, mc=False):
         self.model = create_dnn(seed=seed, input_shape=(2381,), mc=mc)
 
-# SAU:
+# AFTER:
 class KerasAttacker(AbstractAttacker):
     def __init__(self, early_stopping=30, seed=42, mc=False, input_shape=(2381,)):
         self.model = create_dnn(seed=seed, input_shape=input_shape, mc=mc)
 
-# Sử dụng:
+# Usage:
 attacker = KerasAttacker(early_stopping=10, seed=seed, input_shape=(feature_dim,))
 ```
 
-## Kết Quả Mong Đợi
+## Expected Results
 
-Sau khi sửa các vấn đề trên:
-1. **Oracle predictions đúng**: Oracle sẽ cho predictions đúng vì được query với dữ liệu đã scale (giống như khi train).
-2. **Agreement tăng**: Agreement giữa surrogate và target sẽ tăng đáng kể (từ ~0% lên ~90%+).
-3. **Accuracy tăng**: Surrogate model sẽ học được patterns đúng từ target model.
-4. **Model khớp với dữ liệu**: KerasAttacker sẽ tự động khớp với số đặc trưng thực tế của dataset.
+After fixing the above issues:
+1. **Correct oracle predictions**: Oracle will give correct predictions because it's queried with scaled data (same as during training).
+2. **Increased agreement**: Agreement between surrogate and target will increase significantly (from ~0% to ~90%+).
+3. **Increased accuracy**: Surrogate model will learn correct patterns from target model.
+4. **Model matches data**: KerasAttacker will automatically match actual number of features in dataset.
 
-## Các File Đã Sửa
+## Modified Files
 
-1. **`scripts/extract_final_model.py`**:
-   - Scale data trước khi query oracle
-   - Query oracle với scaled data
-   - Truyền `input_shape` vào `KerasAttacker`
+1. **`scripts/attacks/extract_final_model.py`**:
+   - Scale data before querying oracle
+   - Query oracle with scaled data
+   - Pass `input_shape` to `KerasAttacker`
 
 2. **`src/attackers/__init__.py`**:
-   - Thêm parameter `input_shape` vào `KerasAttacker.__init__()`
+   - Added parameter `input_shape` to `KerasAttacker.__init__()`
 
-## Kiểm Tra
+## Verification
 
-Để kiểm tra xem vấn đề đã được sửa:
-1. Chạy `scripts/extract_final_model.py` với dataset nhỏ
-2. Kiểm tra oracle predictions distribution (nên có cả 0 và 1, không phải tất cả là 1)
-3. Kiểm tra agreement giữa surrogate và target (nên > 80%)
-4. Kiểm tra accuracy của surrogate model (nên tăng theo số lượng queries)
-
+To verify the issues are fixed:
+1. Run `scripts/attacks/extract_final_model.py` with small dataset
+2. Check oracle predictions distribution (should have both 0 and 1, not all 1)
+3. Check agreement between surrogate and target (should be > 80%)
+4. Check surrogate model accuracy (should increase with number of queries)

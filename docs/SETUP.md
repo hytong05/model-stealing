@@ -1,120 +1,147 @@
-# Hướng Dẫn Setup Môi Trường
+# Setup Guide
 
-## Yêu Cầu Hệ Thống
+This guide provides detailed instructions for setting up the MIR (Model Inferred Replica) component of the MIGATE framework.
 
-- Python 3.8 trở lên
-- pip (thường đi kèm với Python)
+## System Requirements
 
-## Cách 1: Sử dụng Script Tự Động (Khuyến nghị)
+- Python 3.8 or higher
+- pip (usually included with Python)
+- Git (for installing ember package)
 
-Chạy script setup:
+## Quick Setup (Recommended)
+
+Run the automated setup script:
 
 ```bash
 ./setup_venv.sh
 ```
 
-Script này sẽ:
-1. Kiểm tra Python version
-2. Tạo virtual environment tại `venv/`
-3. Cài đặt tất cả dependencies từ `requirements.txt`
-4. Cài đặt package `ember` từ GitHub (vì không có trên PyPI)
+This script will:
+1. Check Python version
+2. Create a virtual environment in `venv/`
+3. Install all dependencies from `requirements.txt`
+4. Install the `ember` package from GitHub (not available on PyPI)
 
-## Cách 2: Setup Thủ Công
+## Manual Setup
 
-### Bước 1: Tạo Virtual Environment
+### Step 1: Create Virtual Environment
 
 ```bash
 python3 -m venv venv
 ```
 
-### Bước 2: Kích Hoạt Virtual Environment
+### Step 2: Activate Virtual Environment
 
-**Trên Linux/Mac:**
+**On Linux/Mac:**
 ```bash
 source venv/bin/activate
 ```
 
-**Trên Windows:**
+**On Windows:**
 ```bash
 venv\Scripts\activate
 ```
 
-### Bước 3: Cài Đặt Dependencies
+### Step 3: Install Dependencies
 
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Cài đặt package ember từ GitHub (không có trên PyPI)
+# Install ember package from GitHub (not available on PyPI)
 pip install git+https://github.com/endgameinc/ember.git
 ```
 
-## Sử Dụng
+## Usage
 
-Sau khi setup xong, mỗi lần làm việc với dự án:
+After setup, each time you work with the project:
 
-1. Kích hoạt môi trường ảo:
+1. **Activate the virtual environment:**
    ```bash
    source venv/bin/activate
    ```
 
-2. Chạy các script:
+2. **Run scripts:**
    ```bash
-   python scripts/model_extraction.py --help
+   python scripts/attacks/model_extraction.py --help
    ```
 
-3. Tắt môi trường ảo khi xong:
+3. **Deactivate when done:**
    ```bash
    deactivate
    ```
 
-## Cấu Trúc Thư Mục Mới
+## Project Structure
 
 ```
-model_extraction_malware/
-├── src/                    # Source code chính
-│   ├── models/            # Model definitions (DNN, Sorel networks)
+model-stealing/
+├── src/                    # Core source code
+│   ├── models/            # Model definitions (DNN, SOREL networks)
 │   ├── attackers/         # Surrogate model attackers
 │   ├── targets/           # Target model wrappers
 │   ├── datasets/          # Dataset loaders
 │   ├── utils/             # Utility functions
 │   └── sampling/          # Active learning sampling strategies
 ├── scripts/               # Executable scripts
-│   ├── model_extraction.py
-│   ├── extract_final_model.py
-│   ├── evaluate_surrogate_similarity.py
-│   └── run_multiple_extractions.py
-├── data/                  # Data files (nên thêm vào .gitignore)
-├── output/                # Output files và results
-├── logs/                  # Log files
+│   ├── attacks/           # Model extraction pipelines
+│   ├── oracle/            # Oracle query interfaces
+│   ├── data/              # Data preprocessing
+│   ├── inference/         # Model inference utilities
+│   └── examples/          # Example usage scripts
+├── data/                  # Data files (not tracked in git)
+├── artifacts/             # Model artifacts (not tracked)
+│   └── targets/           # Target model files
+├── output/                # Experiment outputs (not tracked)
+├── storage/               # Training checkpoints (not tracked)
+├── logs/                  # Log files (not tracked)
 ├── config/                # Configuration files
-├── venv/                  # Virtual environment (tự động tạo)
+├── docs/                  # Documentation
+├── notebooks/             # Jupyter notebooks
+├── examples/              # Example scripts
+├── venv/                  # Virtual environment (auto-created)
 ├── requirements.txt       # Python dependencies
 └── setup_venv.sh         # Setup script
 ```
 
 ## Troubleshooting
 
-### Lỗi khi import modules
+### Import Errors
 
-Nếu gặp lỗi import, đảm bảo bạn đã kích hoạt virtual environment và đang ở thư mục gốc của project.
+If you encounter import errors, ensure:
+- Virtual environment is activated
+- You are in the project root directory
+- All dependencies are installed
 
-### Lỗi cài đặt TensorFlow
+### TensorFlow Installation Issues
 
-Nếu gặp vấn đề với TensorFlow, thử:
+If you have problems with TensorFlow, try:
 ```bash
 pip install tensorflow --upgrade
 ```
 
-### Lỗi cài đặt PyTorch
+### PyTorch Installation Issues
 
-PyTorch có thể cần cài đặt riêng tùy theo hệ điều hành và GPU. Xem: https://pytorch.org/get-started/locally/
+PyTorch may require separate installation depending on your OS and GPU. See: https://pytorch.org/get-started/locally/
 
-### Lỗi cài đặt ember
+### Ember Package Installation Issues
 
-Package `ember` không có trên PyPI, cần cài từ GitHub. Nếu gặp lỗi, thử:
+The `ember` package is not available on PyPI and must be installed from GitHub. If you encounter errors, try:
 ```bash
 pip install tqdm lief
 pip install git+https://github.com/endgameinc/ember.git
 ```
 
+### Virtual Environment Issues
+
+If the virtual environment doesn't activate:
+- Ensure Python 3.8+ is installed
+- Check that `venv/bin/activate` exists (Linux/Mac) or `venv\Scripts\activate` exists (Windows)
+- Try recreating the virtual environment
+
+## Next Steps
+
+After setup, you can:
+1. Read the [README.md](../README.md) for an overview
+2. Check [ORACLE_USAGE.md](ORACLE_USAGE.md) for oracle query examples
+3. Review [BLACKBOX_COMPLIANCE.md](BLACKBOX_COMPLIANCE.md) for black-box attack guidelines
+4. Run example extraction attacks using `scripts/attacks/model_extraction.py`

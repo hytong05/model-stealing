@@ -1,323 +1,321 @@
-# Giải Thích Chi Tiết Các Thông Số Trong Bảng So Sánh
+# Metrics Explanation Guide
 
-## Tổng Quan
+## Overview
 
-Bảng so sánh đánh giá hiệu quả của các cấu hình model extraction attack khác nhau. Mỗi metric đo lường một khía cạnh khác nhau của quá trình tấn công và chất lượng surrogate model.
-
----
-
-## 1. **Cấu hình (Configuration)**
-
-**Định nghĩa:** Tên của cấu hình extraction attack, thể hiện số lượng queries tối đa được sử dụng.
-
-**Ví dụ:**
-- `max_queries_10000_H5`: Cấu hình với tối đa 10,000 queries, sử dụng model H5 (Keras)
-- `max_queries_5000_H5`: Cấu hình với tối đa 5,000 queries
-- `max_queries_2000_H5`: Cấu hình với tối đa 2,000 queries
-
-**Ý nghĩa:** Giúp phân biệt các thí nghiệm khác nhau và so sánh hiệu quả theo số lượng queries.
+This document provides detailed explanations of all metrics used in the MIR framework for evaluating model extraction attacks. Each metric measures a different aspect of the attack process and surrogate model quality.
 
 ---
 
-## 2. **Queries**
+## 1. Configuration
 
-**Định nghĩa:** Số lượng queries thực tế được gửi đến target model (oracle) trong quá trình active learning.
+**Definition:** Name of the extraction attack configuration, indicating the maximum number of queries used.
 
-**Công thức:** `Queries = Tổng số samples được query từ oracle (không tính seed và validation set)`
+**Examples:**
+- `max_queries_10000_H5`: Configuration with maximum 10,000 queries, using H5 (Keras) model
+- `max_queries_5000_H5`: Configuration with maximum 5,000 queries
+- `max_queries_2000_H5`: Configuration with maximum 2,000 queries
 
-**Ví dụ:**
-- `max_queries_10000_H5`: 9,000 queries (dự kiến 10,000 nhưng thực tế chỉ có 9,000)
+**Meaning:** Helps distinguish different experiments and compare effectiveness by query count.
+
+---
+
+## 2. Queries
+
+**Definition:** Actual number of queries sent to the target model (oracle) during active learning.
+
+**Formula:** `Queries = Total number of samples queried from oracle (excluding seed and validation set)`
+
+**Examples:**
+- `max_queries_10000_H5`: 9,000 queries (expected 10,000 but actual 9,000)
 - `max_queries_5000_H5`: 4,000 queries
 - `max_queries_2000_H5`: 1,000 queries
 
-**Ý nghĩa:**
-- **Quan trọng trong model extraction:** Số queries càng nhiều, attacker càng có nhiều thông tin về target model
-- **Chi phí:** Mỗi query là một lần tương tác với target model (có thể tốn kém hoặc bị phát hiện)
-- **Hiệu quả:** Cần cân bằng giữa số queries và chất lượng extraction
+**Meaning:**
+- **Important in model extraction:** More queries mean attacker has more information about target model
+- **Cost:** Each query is one interaction with target model (may be expensive or detectable)
+- **Efficiency:** Need to balance between query count and extraction quality
 
-**Lưu ý:** Queries thực tế có thể thấp hơn dự kiến do pool data cạn kiệt hoặc class balancing.
+**Note:** Actual queries may be lower than expected due to pool data exhaustion or class balancing.
 
 ---
 
-## 3. **Labels**
+## 3. Labels
 
-**Định nghĩa:** Tổng số labels (nhãn) được sử dụng để train surrogate model, bao gồm:
-- **Seed set:** Dữ liệu ban đầu (thường 2,000 samples)
-- **Validation set:** Dữ liệu validation (thường 1,000 samples)
-- **Queries:** Labels từ oracle qua các rounds của active learning
+**Definition:** Total number of labels used to train surrogate model, including:
+- **Seed set:** Initial data (typically 2,000 samples)
+- **Validation set:** Validation data (typically 1,000 samples)
+- **Queries:** Labels from oracle through active learning rounds
 
-**Công thức:** `Labels = Seed size + Val size + Queries thực tế`
+**Formula:** `Labels = Seed size + Val size + Actual queries`
 
-**Ví dụ:**
+**Examples:**
 - `max_queries_10000_H5`: 12,000 labels = 2,000 (seed) + 1,000 (val) + 9,000 (queries)
 - `max_queries_5000_H5`: 7,000 labels = 2,000 + 1,000 + 4,000
 - `max_queries_2000_H5`: 4,000 labels = 2,000 + 1,000 + 1,000
 
-**Ý nghĩa:**
-- **Tổng dữ liệu training:** Số labels càng nhiều, model có thể học tốt hơn
-- **So sánh với Queries:** Labels = Queries + Seed + Val, nên luôn lớn hơn Queries
+**Meaning:**
+- **Total training data:** More labels may allow model to learn better
+- **Comparison with Queries:** Labels = Queries + Seed + Val, so always larger than Queries
 
 ---
 
-## 4. **Accuracy**
+## 4. Accuracy
 
-**Định nghĩa:** Độ chính xác của surrogate model khi so sánh với **ground truth labels** (nhãn thực tế của dữ liệu).
+**Definition:** Accuracy of surrogate model when compared with **ground truth labels** (actual data labels).
 
-**Công thức:** 
+**Formula:** 
 ```
-Accuracy = (Số dự đoán đúng) / (Tổng số samples)
+Accuracy = (Correct predictions) / (Total samples)
          = (TP + TN) / (TP + TN + FP + FN)
 ```
 
-Trong đó:
-- **TP (True Positive):** Dự đoán đúng là positive (malware)
-- **TN (True Negative):** Dự đoán đúng là negative (benign)
-- **FP (False Positive):** Dự đoán sai là positive (false alarm)
-- **FN (False Negative):** Dự đoán sai là negative (bỏ sót malware)
+Where:
+- **TP (True Positive):** Correctly predicted positive (malware)
+- **TN (True Negative):** Correctly predicted negative (benign)
+- **FP (False Positive):** Incorrectly predicted positive (false alarm)
+- **FN (False Negative):** Incorrectly predicted negative (missed malware)
 
-**Ví dụ:**
+**Examples:**
 - `max_queries_10000_H5`: 0.4338 = 43.38% accuracy
 - `max_queries_5000_H5`: 0.4065 = 40.65% accuracy
 - `max_queries_2000_H5`: 0.3950 = 39.50% accuracy
 
-**Ý nghĩa:**
-- **Đánh giá hiệu suất thực tế:** Accuracy đo lường khả năng phân loại đúng của surrogate model với ground truth
-- **Thấp trong trường hợp này:** Các giá trị ~40% cho thấy:
-  - Surrogate model không học tốt từ oracle
-  - **HOẶC** Oracle (target model) không chính xác với ground truth
-  - **HOẶC** Có class imbalance nghiêm trọng (cần xem Balanced Accuracy)
+**Meaning:**
+- **Evaluates actual performance:** Accuracy measures surrogate model's ability to classify correctly with ground truth
+- **Low in this case:** Values ~40% indicate:
+  - Surrogate model didn't learn well from oracle
+  - **OR** Oracle (target model) is not accurate with ground truth
+  - **OR** Severe class imbalance (need to check Balanced Accuracy)
 
-**Lưu ý quan trọng:**
-- Accuracy được tính với **ground truth**, không phải với oracle labels
-- Nếu oracle không chính xác, accuracy sẽ thấp dù agreement cao
-- Accuracy thấp (~40%) nhưng Agreement cao (~90%) cho thấy: **Oracle không chính xác với ground truth**
+**Important Note:**
+- Accuracy is calculated with **ground truth**, not oracle labels
+- If oracle is inaccurate, accuracy will be low even with high agreement
+- Low accuracy (~40%) but high agreement (~90%) indicates: **Oracle is not accurate with ground truth**
 
 ---
 
-## 5. **Balanced Accuracy**
+## 5. Balanced Accuracy
 
-**Định nghĩa:** Độ chính xác cân bằng, tính trung bình accuracy của từng class riêng biệt. Quan trọng khi có **class imbalance** (một class chiếm đa số).
+**Definition:** Balanced accuracy, calculated as average of per-class accuracies. Important when there is **class imbalance** (one class dominates).
 
-**Công thức:**
+**Formula:**
 ```
 Balanced Accuracy = (Sensitivity + Specificity) / 2
                   = (TP/(TP+FN) + TN/(TN+FP)) / 2
 ```
 
-Trong đó:
-- **Sensitivity (Recall):** Tỷ lệ dự đoán đúng positive trong số tất cả positive thực tế
-- **Specificity:** Tỷ lệ dự đoán đúng negative trong số tất cả negative thực tế
+Where:
+- **Sensitivity (Recall):** Ratio of correctly predicted positive among all actual positives
+- **Specificity:** Ratio of correctly predicted negative among all actual negatives
 
-**Ví dụ:**
+**Examples:**
 - `max_queries_10000_H5`: 0.4320 = 43.20% balanced accuracy
 - `max_queries_5000_H5`: 0.4049 = 40.49% balanced accuracy
 - `max_queries_2000_H5`: 0.3935 = 39.35% balanced accuracy
 
-**Ý nghĩa:**
-- **Quan trọng với class imbalance:** Nếu một class chiếm 90% dữ liệu, accuracy thường sẽ cao nhưng không phản ánh đúng khả năng phân loại
-- **So sánh với Accuracy:** 
-  - Nếu Balanced Accuracy ≈ Accuracy: Không có class imbalance nghiêm trọng
-  - Nếu Balanced Accuracy << Accuracy: Có class imbalance, model bias về class đa số
-- **Trong trường hợp này:** Balanced Accuracy ≈ Accuracy (~40%), cho thấy không có class imbalance nghiêm trọng, nhưng model vẫn không học tốt
+**Meaning:**
+- **Important with class imbalance:** If one class dominates 90% of data, accuracy will be high but doesn't reflect true classification ability
+- **Comparison with Accuracy:** 
+  - If Balanced Accuracy ≈ Accuracy: No severe class imbalance
+  - If Balanced Accuracy << Accuracy: Class imbalance exists, model biased toward majority class
+- **In this case:** Balanced Accuracy ≈ Accuracy (~40%), indicating no severe class imbalance, but model still doesn't learn well
 
-**Khi nào quan trọng:**
-- Dữ liệu không cân bằng (ví dụ: 90% benign, 10% malware)
-- Cần đánh giá công bằng cho cả 2 classes
-- Accuracy thông thường có thể gây hiểu lầm
+**When Important:**
+- Unbalanced data (e.g., 90% benign, 10% malware)
+- Need fair evaluation for both classes
+- Regular accuracy can be misleading
 
 ---
 
-## 6. **F1 Score**
+## 6. F1 Score
 
-**Định nghĩa:** Harmonic mean của Precision và Recall, cân bằng giữa độ chính xác và độ bao phủ.
+**Definition:** Harmonic mean of Precision and Recall, balancing accuracy and coverage.
 
-**Công thức:**
+**Formula:**
 ```
 F1 = 2 × (Precision × Recall) / (Precision + Recall)
 ```
 
-Trong đó:
-- **Precision:** Tỷ lệ dự đoán positive đúng trong số tất cả dự đoán positive
-- **Recall:** Tỷ lệ dự đoán đúng positive trong số tất cả positive thực tế
+Where:
+- **Precision:** Ratio of correct positive predictions among all positive predictions
+- **Recall:** Ratio of correct positive predictions among all actual positives
 
-**Ví dụ:**
+**Examples:**
 - `max_queries_10000_H5`: 0.1391 = 13.91% F1 score
 - `max_queries_5000_H5`: 0.1194 = 11.94% F1 score
 - `max_queries_2000_H5`: 0.1276 = 12.76% F1 score
 
-**Ý nghĩa:**
-- **Đánh giá tổng hợp:** F1 cân bằng giữa Precision và Recall
-- **Thấp trong trường hợp này:** F1 ~12-14% rất thấp, cho thấy:
-  - Precision thấp: Nhiều false positives
-  - Recall thấp: Bỏ sót nhiều malware
-  - Model không học tốt để phân loại chính xác
+**Meaning:**
+- **Comprehensive evaluation:** F1 balances Precision and Recall
+- **Low in this case:** F1 ~12-14% is very low, indicating:
+  - Low Precision: Many false positives
+  - Low Recall: Missing many malware samples
+  - Model doesn't learn well for accurate classification
 
-**Khi nào quan trọng:**
-- Cần cân bằng giữa false positives và false negatives
-- Trong malware detection: Cả 2 lỗi đều quan trọng (false alarm và bỏ sót malware)
-- Khi có class imbalance, F1 thường tốt hơn accuracy
+**When Important:**
+- Need balance between false positives and false negatives
+- In malware detection: Both errors are important (false alarms and missed malware)
+- With class imbalance, F1 often better than accuracy
 
-**Mối quan hệ:**
-- F1 thấp → Precision hoặc Recall thấp (hoặc cả 2)
-- Với Precision = 0.2855 và Recall = 0.0920 (max_queries_10000_H5):
+**Relationship:**
+- Low F1 → Low Precision or Recall (or both)
+- With Precision = 0.2855 and Recall = 0.0920 (max_queries_10000_H5):
   - F1 = 2 × (0.2855 × 0.0920) / (0.2855 + 0.0920) ≈ 0.1391 ✓
 
 ---
 
-## 7. **Agreement**
+## 7. Agreement
 
-**Định nghĩa:** Tỷ lệ đồng ý giữa predictions của surrogate model và predictions của target model (oracle). **Đây là metric quan trọng nhất trong model extraction attack.**
+**Definition:** Agreement rate between surrogate model predictions and target model (oracle) predictions. **This is the most important metric in model extraction attacks.**
 
-**Công thức:**
+**Formula:**
 ```
-Agreement = (Số predictions giống nhau) / (Tổng số samples)
+Agreement = (Matching predictions) / (Total samples)
           = (Surrogate predictions == Oracle predictions).mean()
 ```
 
-**Ví dụ:**
+**Examples:**
 - `max_queries_10000_H5`: 0.9133 = 91.33% agreement
 - `max_queries_5000_H5`: 0.9275 = 92.75% agreement
 - `max_queries_2000_H5`: 0.9028 = 90.28% agreement
 
-**Ý nghĩa:**
-- **Mục tiêu của model extraction:** Agreement cao = Surrogate model đã học tốt để bắt chước target model
-- **Không phải accuracy:** Agreement so sánh với oracle, không phải ground truth
-- **Trong trường hợp này:** Agreement ~90% cao, nhưng Accuracy ~40% thấp → **Oracle không chính xác với ground truth**
+**Meaning:**
+- **Goal of model extraction:** High agreement = Surrogate model learned well to mimic target model
+- **Not accuracy:** Agreement compares with oracle, not ground truth
+- **In this case:** Agreement ~90% is high, but Accuracy ~40% is low → **Oracle is not accurate with ground truth**
 
-**So sánh với Accuracy:**
-- **Agreement cao + Accuracy thấp:** 
-  - Surrogate học tốt từ oracle ✓
-  - Nhưng oracle không chính xác với ground truth ✗
-  - → Model extraction thành công, nhưng target model không tốt
+**Comparison with Accuracy:**
+- **High Agreement + Low Accuracy:** 
+  - Surrogate learned well from oracle ✓
+  - But oracle is not accurate with ground truth ✗
+  - → Model extraction successful, but target model not good
 
-- **Agreement cao + Accuracy cao:**
-  - Surrogate học tốt từ oracle ✓
-  - Oracle cũng chính xác với ground truth ✓
-  - → Model extraction thành công và target model tốt
+- **High Agreement + High Accuracy:**
+  - Surrogate learned well from oracle ✓
+  - Oracle also accurate with ground truth ✓
+  - → Model extraction successful and target model good
 
-**Khi nào quan trọng:**
-- **Đánh giá thành công của attack:** Agreement là metric chính để đo lường extraction
-- **Không cần ground truth:** Agreement chỉ cần oracle predictions
-- **Thực tế:** Trong model extraction, attacker không có ground truth, chỉ có oracle responses
+**When Important:**
+- **Evaluating attack success:** Agreement is main metric for measuring extraction
+- **No ground truth needed:** Agreement only needs oracle predictions
+- **In practice:** In model extraction, attacker has no ground truth, only oracle responses
 
 ---
 
-## 8. **Threshold (Optimal Threshold)**
+## 8. Threshold (Optimal Threshold)
 
-**Định nghĩa:** Ngưỡng tối ưu để chuyển đổi probabilities thành binary predictions (0 hoặc 1).
+**Definition:** Optimal threshold for converting probabilities to binary predictions (0 or 1).
 
-**Công thức:** Threshold được tìm bằng cách tối ưu F1-score trên validation set:
+**Formula:** Threshold found by optimizing F1-score on validation set:
 ```
 For each threshold in [0.1, 0.2, ..., 0.9]:
     predictions = (probabilities >= threshold).astype(int)
     f1 = calculate_f1_score(ground_truth, predictions)
     
-optimal_threshold = threshold với F1 cao nhất
+optimal_threshold = threshold with highest F1
 ```
 
-**Ví dụ:**
-- Tất cả cấu hình: 0.100 = 10% threshold
+**Examples:**
+- All configurations: 0.100 = 10% threshold
 
-**Ý nghĩa:**
-- **Thấp (0.1):** Model cần probability chỉ 10% để dự đoán là positive (malware)
-- **Cho thấy:**
-  - Model có xu hướng dự đoán probabilities thấp
-  - Có thể do class imbalance (nhiều negative, ít positive)
-  - Hoặc model không tự tin với predictions
+**Meaning:**
+- **Low (0.1):** Model needs only 10% probability to predict positive (malware)
+- **Indicates:**
+  - Model tends to predict low probabilities
+  - May be due to class imbalance (many negative, few positive)
+  - Or model not confident with predictions
 
-**So sánh:**
-- **Threshold = 0.5 (mặc định):** Cân bằng, dự đoán positive khi probability ≥ 50%
-- **Threshold = 0.1 (trong trường hợp này):** Rất thấp, dự đoán positive khi probability ≥ 10%
-  - → Model cần rất ít confidence để dự đoán malware
-  - → Có thể do model không học tốt hoặc có bias
+**Comparison:**
+- **Threshold = 0.5 (default):** Balanced, predict positive when probability ≥ 50%
+- **Threshold = 0.1 (in this case):** Very low, predict positive when probability ≥ 10%
+  - → Model needs very little confidence to predict malware
+  - → May be due to model not learning well or having bias
 
-**Khi nào quan trọng:**
-- **Tối ưu performance:** Threshold ảnh hưởng đến Precision, Recall, F1
-- **Class imbalance:** Threshold thấp thường tốt hơn khi có nhiều negative
-- **Cost-sensitive:** Nếu false positive đắt hơn false negative, tăng threshold
+**When Important:**
+- **Optimize performance:** Threshold affects Precision, Recall, F1
+- **Class imbalance:** Low threshold often better with many negatives
+- **Cost-sensitive:** If false positive more expensive than false negative, increase threshold
 
 ---
 
-## 9. **AUC (Area Under ROC Curve)**
+## 9. AUC (Area Under ROC Curve)
 
-**Định nghĩa:** Diện tích dưới đường cong ROC (Receiver Operating Characteristic), đo lường khả năng phân biệt giữa 2 classes của model.
+**Definition:** Area under ROC (Receiver Operating Characteristic) curve, measuring model's ability to distinguish between 2 classes.
 
-**Công thức:**
+**Formula:**
 ```
 AUC = ∫ ROC_curve d(False Positive Rate)
 ```
 
-ROC curve vẽ:
+ROC curve plots:
 - **X-axis:** False Positive Rate (FPR) = FP / (FP + TN)
 - **Y-axis:** True Positive Rate (TPR/Recall) = TP / (TP + FN)
 
-**Giá trị:**
-- **AUC = 1.0:** Perfect classifier (phân biệt hoàn hảo)
-- **AUC = 0.5:** Random classifier (không tốt hơn đoán ngẫu nhiên)
-- **AUC < 0.5:** Tệ hơn random (có thể đảo ngược predictions)
+**Values:**
+- **AUC = 1.0:** Perfect classifier (perfect distinction)
+- **AUC = 0.5:** Random classifier (no better than random guessing)
+- **AUC < 0.5:** Worse than random (may reverse predictions)
 
-**Ví dụ:**
+**Examples:**
 - `max_queries_10000_H5`: 0.4258 = 42.58% AUC
 - `max_queries_5000_H5`: 0.2613 = 26.13% AUC
 - `max_queries_2000_H5`: 0.2634 = 26.34% AUC
 
-**Ý nghĩa:**
-- **Rất thấp trong trường hợp này:** AUC ~26-43% < 50% (random)
-- **Cho thấy:**
-  - Model không phân biệt được giữa malware và benign
-  - Có thể do:
-    - Model không học tốt từ oracle
-    - Oracle không chính xác với ground truth
-    - Dữ liệu không đủ hoặc không đại diện
+**Meaning:**
+- **Very low in this case:** AUC ~26-43% < 50% (random)
+- **Indicates:**
+  - Model cannot distinguish between malware and benign
+  - May be due to:
+    - Model not learning well from oracle
+    - Oracle not accurate with ground truth
+    - Insufficient or unrepresentative data
 
-**So sánh với các metrics khác:**
-- **AUC thấp + Accuracy thấp:** Model không học tốt
-- **AUC thấp + Agreement cao:** 
-  - Surrogate bắt chước oracle tốt
-  - Nhưng oracle không phân biệt tốt giữa 2 classes
-  - → Oracle có vấn đề, không phải surrogate
+**Comparison with other metrics:**
+- **Low AUC + Low Accuracy:** Model not learning well
+- **Low AUC + High Agreement:** 
+  - Surrogate mimics oracle well
+  - But oracle doesn't distinguish well between classes
+  - → Oracle has issues, not surrogate
 
-**Khi nào quan trọng:**
-- **Đánh giá khả năng phân biệt:** AUC không phụ thuộc vào threshold
-- **Class imbalance:** AUC tốt hơn accuracy khi có imbalance
-- **So sánh models:** AUC cho phép so sánh models độc lập với threshold
-
----
-
-## Tổng Kết và Phân Tích
-
-### Pattern Quan Sát:
-
-1. **Agreement cao (~90%):** Surrogate model học tốt để bắt chước oracle
-2. **Accuracy thấp (~40%):** Oracle không chính xác với ground truth
-3. **AUC rất thấp (~26-43%):** Oracle không phân biệt tốt giữa malware và benign
-4. **F1 thấp (~12-14%):** Model không phân loại tốt với ground truth
-5. **Threshold thấp (0.1):** Model cần ít confidence để dự đoán positive
-
-### Kết Luận:
-
-**Model extraction attack thành công** (Agreement ~90%), nhưng:
-- **Target model (oracle) không chính xác** với ground truth
-- **Surrogate đã học tốt** để bắt chước oracle, nhưng vì oracle không tốt nên surrogate cũng không tốt
-- **Cần kiểm tra:** Oracle accuracy vs ground truth để xác nhận
-
-### Khuyến Nghị:
-
-1. **Kiểm tra Oracle:** Tính oracle accuracy vs ground truth để xác nhận oracle có vấn đề
-2. **Cải thiện Oracle:** Nếu oracle không chính xác, cần retrain target model
-3. **Đánh giá Extraction:** Agreement cao cho thấy extraction thành công, nhưng cần oracle tốt để có surrogate tốt
-4. **Tăng Queries:** Có thể thử tăng queries để xem có cải thiện không (nhưng dựa vào kết quả, có vẻ không phải vấn đề về số lượng queries)
+**When Important:**
+- **Evaluate discrimination ability:** AUC independent of threshold
+- **Class imbalance:** AUC better than accuracy with imbalance
+- **Compare models:** AUC allows model comparison independent of threshold
 
 ---
 
-## Tài Liệu Tham Khảo
+## Summary and Analysis
 
-- **Accuracy:** Tỷ lệ dự đoán đúng tổng thể
-- **Balanced Accuracy:** Accuracy cân bằng cho từng class
-- **Precision:** Độ chính xác của dự đoán positive
-- **Recall:** Độ bao phủ của dự đoán positive
-- **F1 Score:** Cân bằng giữa Precision và Recall
-- **AUC:** Khả năng phân biệt giữa 2 classes
-- **Agreement:** Độ đồng ý giữa surrogate và oracle (metric chính trong model extraction)
+### Observed Patterns:
 
+1. **High Agreement (~90%):** Surrogate model learned well to mimic oracle
+2. **Low Accuracy (~40%):** Oracle not accurate with ground truth
+3. **Very Low AUC (~26-43%):** Oracle doesn't distinguish well between malware and benign
+4. **Low F1 (~12-14%):** Model doesn't classify well with ground truth
+5. **Low Threshold (0.1):** Model needs little confidence to predict positive
 
+### Conclusion:
+
+**Model extraction attack successful** (Agreement ~90%), but:
+- **Target model (oracle) not accurate** with ground truth
+- **Surrogate learned well** to mimic oracle, but because oracle is not good, surrogate is also not good
+- **Need to check:** Oracle accuracy vs ground truth to confirm
+
+### Recommendations:
+
+1. **Check Oracle:** Calculate oracle accuracy vs ground truth to confirm oracle has issues
+2. **Improve Oracle:** If oracle inaccurate, need to retrain target model
+3. **Evaluate Extraction:** High agreement shows extraction successful, but need good oracle for good surrogate
+4. **Increase Queries:** May try increasing queries to see if improvement (but based on results, doesn't seem to be query count issue)
+
+---
+
+## References
+
+- **Accuracy:** Overall correct prediction rate
+- **Balanced Accuracy:** Balanced accuracy per class
+- **Precision:** Accuracy of positive predictions
+- **Recall:** Coverage of positive predictions
+- **F1 Score:** Balance between Precision and Recall
+- **AUC:** Ability to distinguish between 2 classes
+- **Agreement:** Agreement between surrogate and oracle (main metric in model extraction)
