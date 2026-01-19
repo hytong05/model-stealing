@@ -2,10 +2,6 @@
 
 **MIR (Model Inferred Replica)** is a component of the **MIGATE** framework (Model Inferred Replica for Adversarial Generalized Evasion), focusing on the model extraction phase for malware classifiers and antivirus systems.
 
-[![DOI:10.1016/j.cose.2023.103192](http://img.shields.io/badge/DOI-10.1016/j.cose.2023.103192-1AA7EC.svg)](https://doi.org/10.1016/j.cose.2023.103192)
-
-This repository implements model extraction attacks against malware classifiers and antivirus systems at low false positive conditions, as described in the paper [Stealing Malware Classifiers and Antivirus at Low False Positive Conditions](https://www.sciencedirect.com/science/article/pii/S0167404823001025).
-
 ## Overview
 
 MIR provides a comprehensive framework for extracting surrogate models from black-box malware classifiers and antivirus systems using active learning techniques. The extracted models can achieve high agreement with target models while maintaining low false positive rates.
@@ -83,6 +79,7 @@ model-stealing/
 │   │   └── evaluate_surrogate_similarity.py
 │   ├── oracle/                    # Black-box query interfaces
 │   ├── data/                      # Data preprocessing
+│   ├── inference/                 # Model inference utilities
 │   └── examples/                  # Example usage scripts
 ├── config/                        # Configuration files
 ├── data/                          # Datasets (not tracked)
@@ -221,24 +218,6 @@ Metrics include:
 - [docs/ORACLE_USAGE.md](docs/ORACLE_USAGE.md): Oracle query interface documentation
 - [docs/BLACKBOX_COMPLIANCE.md](docs/BLACKBOX_COMPLIANCE.md): Black-box compliance and feature alignment
 - [docs/reports/](docs/reports/): Generated evaluation reports and metrics
-
-## Citation
-
-If you use this code, please cite:
-
-```bibtex
-@article{RIGAKI2023103192,
-  title = {Stealing and evading malware classifiers and antivirus at low false positive conditions},
-  journal = {Computers & Security},
-  volume = {129},
-  pages = {103192},
-  year = {2023},
-  issn = {0167-4048},
-  doi = {https://doi.org/10.1016/j.cose.2023.103192},
-  url = {https://www.sciencedirect.com/science/article/pii/S0167404823001025},
-  author = {M. Rigaki and S. Garcia},
-}
-```
 
 ## License
 
